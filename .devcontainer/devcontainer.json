@@ -1,0 +1,39 @@
+{
+  "name": "Python 3.9 (uv) - Kafka & Airflow",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/ece-projec",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/nerdit-tech/devcontainer-features/opencode:0": {},
+    "ghcr.io/nerdit-tech/devcontainer-features/opencode-data:0": {},
+    "ghcr.io/devcontainers-extra/features/uv:1": {}
+  },
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": false
+      }
+    }
+  },
+  "mounts": [
+    "source=/home/michael/.var/app/com.bitwarden.desktop/data/.bitwarden-ssh-agent.sock,target=/tmp/ssh-agent.sock,type=bind"
+  ],
+  "remoteUser": "root",
+  "updateRemoteUserUID": false,
+  "postCreateCommand": "uv sync --locked --all-groups",
+  "remoteEnv": {
+    "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}",
+    "UV_LINK_MODE": "copy", 
+    "UV_COMPILE_BYTECODE": "1",
+    "UV_PROJECT_ENVIRONMENT": "${containerWorkspaceFolder}/.venv",
+    "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock"
+  }
+}

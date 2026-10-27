@@ -1,0 +1,82 @@
+[env]
+CB_BOOTSTRAP_SERVERS = "kafka:9092"
+
+[tools]
+python = "3.9"
+uv = "latest"
+
+[tasks."broker:check"]
+description = "Check if Kafka broker is reachable"
+run = '''
+echo "CB_BOOTSTRAP_SERVERS=$CB_BOOTSTRAP_SERVERS"
+echo "Checking Kafka connectivity..."
+kafka-topics --bootstrap-server $CB_BOOTSTRAP_SERVERS --list 2>&1 | head -10 || echo "Note: kafka-topics CLI may not be installed, but that's okay"
+'''
+
+[tasks."kafka:create-topics"]
+description = "Create all Kafka topics needed by the producer"
+run = "uv run citibike-create-topics --replication 1"
+
+[tasks."capture:live"]
+description = "Generate a sample capture file using tee from live GBFS/Open-Meteo feeds (requires internet)"
+run = '''
+export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
+echo "Writing capture to $CB_TEE_PATH"
+echo "This will poll for ~70 seconds to capture at least one status poll..."
+timeout 70 uv run citibike-producer live
+echo "Capture complete. File: $CB_TEE_PATH"
+ls -lh $CB_TEE_PATH 2>&1 || echo "Warning: Capture file may not exist if no data was written"
+'''
+
+[tasks."capture:synthetic"]
+description = "Generate a synthetic sample capture (works offline)"
+run = '''
+export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
+echo "Generating synthetic sample to $CB_TEE_PATH"
+python3 scripts/make_sample_capture.py $CB_TEE_PATH
+ls -lh $CB_TEE_PATH
+'''
+
+[tasks."kafka:replay"]
+description = "Replay a captured sample against Kafka"
+run = '''
+export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
+if [ ! -f "$CB_TEE_PATH" ]; then
+  echo "Error: Capture file $CB_TEE_PATH not found."
+  echo "Run 'mise run capture:live' first to generate one."
+  exit 1
+fi
+echo "Replaying $CB_TEE_PATH against $CB_BOOTSTRAP_SERVERS (speed=60)..."
+uv run citibike-producer replay $CB_TEE_PATH --speed 60
+echo "Replay complete!"
+'''
+
+[tasks."kafka:consume-status"]
+description = "Consume a few messages from citibike.station_status topic"
+run = '''
+echo "Consuming from citibike.station_status..."
+kafka-console-consumer --bootstrap-server $CB_BOOTSTRAP_SERVERS --topic citibike.station_status --from-beginning --max-messages 3 2>&1 | tail -n 40
+'''
+
+[tasks."kafka:consume-poll"]
+description = "Consume a few messages from pipeline.poll_log topic"
+run = '''
+echo "Consuming from pipeline.poll_log..."
+kafka-console-consumer --bootstrap-server $CB_BOOTSTRAP_SERVERS --topic pipeline.poll_log --from-beginning --max-messages 2 2>&1 | tail -n 40
+'''
+
+[tasks."kafka:verify"]
+description = "Verify messages in both main topics"
+depends = ["kafka:consume-status", "kafka:consume-poll"]
+
+[tasks."test:unit"]
+description = "Run unit tests (no network/broker needed)"
+run = "uv run pytest -v"
+
+[tasks."smoke:replay"]
+description = "Full Option A flow: check broker, create topics, capture, and replay"
+depends = ["broker:check", "kafka:create-topics", "capture:live", "kafka:replay"]
+
+[tasks."smoke:replay-quick"]
+description = "Quick replay flow assuming capture already exists"
+depends = ["broker:check", "kafka:create-topics", "kafka:replay"]
