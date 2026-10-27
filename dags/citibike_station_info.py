@@ -1,12 +1,15 @@
 """
 Citibike station info DAG - hourly processing
 """
+import logging
 from datetime import timedelta
+from pathlib import Path
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
-import logging
-import os
+
+_logger = logging.getLogger(__name__)
 
 default_args = {
     'owner': 'airflow',
@@ -29,19 +32,18 @@ dag = DAG(
 
 
 def process_station_info(**context):
-    logging.info("Processing station information...")
+    _logger.info("Processing station information...")
     try:
-        from pathlib import Path
         base_dir = Path('/workspaces/ece-projec/data')
         try:
             (base_dir / 'curated' / 'dim_station').mkdir(parents=True, exist_ok=True)
-        except:
+        except OSError:
             base_dir = Path('/tmp/data')
             (base_dir / 'curated' / 'dim_station').mkdir(parents=True, exist_ok=True)
-        logging.info("Station info processed")
+        _logger.info("Station info processed")
         return "done"
     except Exception as e:
-        logging.error(f"Error: {e}")
+        _logger.error(f"Error: {e}")
         raise
 
 

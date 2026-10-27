@@ -1,12 +1,15 @@
 """
 Citibike daily quality DAG
 """
+import logging
 from datetime import timedelta
+from pathlib import Path
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
-import logging
-from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 default_args = {
     'owner': 'airflow',
@@ -29,17 +32,16 @@ dag = DAG(
 
 
 def quality_checks(**context):
-    logging.info("Running daily quality checks...")
-    from pathlib import Path
+    _logger.info("Running daily quality checks...")
     base_dir = Path('/workspaces/ece-projec/data')
     try:
         (base_dir / 'quality').mkdir(parents=True, exist_ok=True)
         (base_dir / 'ops').mkdir(parents=True, exist_ok=True)
-    except:
+    except OSError:
         base_dir = Path('/tmp/data')
         (base_dir / 'quality').mkdir(parents=True, exist_ok=True)
         (base_dir / 'ops').mkdir(parents=True, exist_ok=True)
-    logging.info("Quality checks complete")
+    _logger.info("Quality checks complete")
     return "done"
 
 

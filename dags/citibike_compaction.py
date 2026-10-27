@@ -1,12 +1,15 @@
 """
 Citibike compaction DAG - hourly
 """
+import logging
 from datetime import timedelta
+from pathlib import Path
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
-import logging
-from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 default_args = {
     'owner': 'airflow',
@@ -29,17 +32,16 @@ dag = DAG(
 
 
 def compact_data(**context):
-    logging.info("Compacting data...")
-    from pathlib import Path
+    _logger.info("Compacting data...")
     base_dir = Path('/workspaces/ece-projec/data')
     try:
         (base_dir / 'raw').mkdir(parents=True, exist_ok=True)
         (base_dir / 'curated').mkdir(parents=True, exist_ok=True)
-    except:
+    except OSError:
         base_dir = Path('/tmp/data')
         (base_dir / 'raw').mkdir(parents=True, exist_ok=True)
         (base_dir / 'curated').mkdir(parents=True, exist_ok=True)
-    logging.info("Compaction complete")
+    _logger.info("Compaction complete")
     return "done"
 
 
