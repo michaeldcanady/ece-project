@@ -34,7 +34,10 @@ class FakeConsumer:
         self.log.setdefault((topic, partition), []).append((key.encode(), value, ts))
 
     # --- confluent_kafka.Consumer subset
-    def list_topics(self, topic, timeout=0):
+    def list_topics(self, topic=None, timeout=0):
+        if topic is None:   # all topics, like the real client
+            return SimpleNamespace(topics={t: SimpleNamespace(partitions={i: None for i in range(n)}, error=None)
+                                           for t, n in self.partitions.items() if n})
         n = self.partitions.get(topic, 0)
         meta = SimpleNamespace(partitions={i: None for i in range(n)}, error=None)
         return SimpleNamespace(topics={topic: meta} if n else {})

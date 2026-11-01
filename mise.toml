@@ -9,19 +9,10 @@ uv = "latest"
 
 # Everything that runs is an Airflow DAG; these tasks inspect the stack or trigger DAGs from the dev shell.
 # They run inside the dev container (the hostnames `kafka` and `airflow` only resolve there).
-# kcat is installed by .devcontainer/Dockerfile; the Kafka CLIs are not available in this container.
 
 [tasks."broker:check"]
 description = "Fail unless the Kafka broker is reachable and the pipeline topics exist"
-run = '''
-set -e
-echo "CB_BOOTSTRAP_SERVERS=$CB_BOOTSTRAP_SERVERS"
-topics=$(kcat -b "$CB_BOOTSTRAP_SERVERS" -L -J | python3 -c "import sys,json; print(' '.join(sorted(t['topic'] for t in json.load(sys.stdin)['topics'])))")
-echo "topics: $topics"
-for t in citibike.station_status citibike.station_info weather.current pipeline.poll_log pipeline.dlq; do
-  case " $topics " in *" $t "*) ;; *) echo "MISSING topic $t (trigger: mise run dag:trigger citibike_setup)"; exit 1;; esac
-done
-'''
+run = "uv run python -m citibike_producer.broker check"
 
 [tasks."dag:trigger"]
 description = "Trigger a DAG run: mise run dag:trigger <dag_id> ['<json conf>']"
@@ -45,12 +36,12 @@ description = "Replay the committed sample through Kafka at 60x (citibike_replay
 run = "mise run dag:trigger citibike_replay '{\"speed\": 60}'"
 
 [tasks."kafka:consume-status"]
-description = "Show the 3 oldest messages of citibike.station_status"
-run = 'kcat -b "$CB_BOOTSTRAP_SERVERS" -t citibike.station_status -C -o beginning -c 3 -e -q'
+description = "Show the 3 oldest messages of each citibike.station_status partition"
+run = "uv run python -m citibike_producer.broker peek citibike.station_status --count 3"
 
 [tasks."kafka:consume-poll"]
 description = "Show the 3 newest messages of pipeline.poll_log"
-run = 'kcat -b "$CB_BOOTSTRAP_SERVERS" -t pipeline.poll_log -C -o -3 -c 3 -e -q'
+run = "uv run python -m citibike_producer.broker peek pipeline.poll_log --count 3 --newest"
 
 [tasks."kafka:verify"]
 description = "Verify messages in both main topics"
