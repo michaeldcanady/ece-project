@@ -2,11 +2,12 @@ import gzip
 import json
 import threading
 
-from citibike_producer.config import Config, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER
-from citibike_producer.jobs import GbfsStationJob, WeatherJob, retry_delay, run_loop
+from citibike_producer.config import TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
+from citibike_producer.jobs import GbfsStationJob, WeatherJob
 from citibike_producer.replay import replay
 from citibike_producer.sink import KafkaSink
 from citibike_producer.sources import FetchResult, parse_discovery
+from citibike_producer.tasks import poll_once, replay_capture
 
 
 class FakeProducer:
@@ -68,8 +69,7 @@ def ok_result(body):
 def make_job(client, producer, cfg=None):
     cfg = cfg or Config()
     sink = KafkaSink(cfg, producer=producer)
-    job = GbfsStationJob(cfg, sink, client, FakeRegistry(), "station_status", "station_status",
-                         TOPIC_STATUS, cfg.status_interval_s)
+    job = GbfsStationJob(cfg, sink, client, FakeRegistry(), "station_status", "station_status", TOPIC_STATUS)
     return job
 
 
@@ -157,42 +157,81 @@ def test_weather_job():
     assert len(by_topic(prod, TOPIC_WEATHER)) == 1   # unchanged observation skipped
 
 
-def test_retry_delay_backs_off_and_caps():
-    cfg = Config()
-    job = make_job(FakeClient([]), FakeProducer(), cfg)
-    delays = []
-    for f in range(1, 6):
-        job.consecutive_failures = f
-        delays.append(retry_delay(job, cfg))
-    # status interval is 30 s, so the retry delay is capped at the interval
-    assert delays == [30, 30, 30, 30, 30]
-    info = GbfsStationJob(cfg, KafkaSink(cfg, producer=FakeProducer()), None, FakeRegistry(),
-                          "station_information", "station_information", "t", cfg.info_interval_s)
-    got = []
-    for f in range(1, 8):
-        info.consecutive_failures = f
-        got.append(retry_delay(info, cfg))
-    assert got == [30, 60, 120, 120, 120, 120, 120]
+DISCOVERY_BODY = {"version": "2.3", "data": {"en": {"feeds": [
+    {"name": "station_status", "url": "https://example.test/station_status.json"},
+    {"name": "station_information", "url": "https://example.test/station_information.json"}]}}}
 
 
-def test_run_loop_survives_exceptions_and_stops():
-    class Boom:
-        name = "boom"
-        interval_s = 0.01
-        consecutive_failures = 0
-        calls = 0
+def test_poll_once_carries_state_between_runs():
+    """Each Airflow run is a fresh process: discovery and skip-unchanged must survive via the state dict."""
+    prod = FakeProducer()
+    first = poll_once("station_status", None, Config(), producer=prod,
+                      client=FakeClient([ok_result(DISCOVERY_BODY), ok_result(STATUS_BODY)]))
+    assert first["ok"] and first["outcome"] == "ok"
+    assert first["state"]["job"]["last_feed_updated"] == 1760000100
+    assert first["state"]["discovery"]["urls"]["station_status"].endswith("station_status.json")
+    # second run: no discovery fetch (the client has only the status response), unchanged feed skipped
+    second = poll_once("station_status", first["state"], Config(), producer=prod,
+                       client=FakeClient([ok_result(STATUS_BODY)]))
+    assert second["ok"] and second["outcome"] == "skipped_unchanged"
+    assert len(by_topic(prod, TOPIC_STATUS)) == 3
 
-        def run_once(self):
-            self.calls += 1
-            raise RuntimeError("x")
 
-    cfg = Config(retry_base_s=0.01, max_backoff_s=0.02)
-    job, stop = Boom(), threading.Event()
-    t = threading.Thread(target=run_loop, args=(job, cfg, stop))
-    t.start()
-    threading.Timer(0.3, stop.set).start()
-    t.join(timeout=5)
-    assert not t.is_alive() and job.calls >= 2
+def test_poll_once_reports_failure_and_counts_it_in_state():
+    bad = FetchResult("timeout", "u", "2026-10-20T14:00:00.000+00:00", error="read timeout")
+    state = {"job": {"consecutive_failures": 2}}
+    prod = FakeProducer()
+    res = poll_once("weather", state, Config(), producer=prod, client=FakeClient([bad]))
+    assert not res["ok"] and res["outcome"] == "timeout" and res["error"] == "read timeout"
+    assert res["state"]["job"]["consecutive_failures"] == 3
+    assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["consecutive_failures"] == 3
+
+
+def test_poll_once_captures_one_file_per_job(tmp_path):
+    cfg = Config(capture_dir=str(tmp_path / "capture"))
+    poll_once("station_status", None, cfg, producer=FakeProducer(),
+              client=FakeClient([ok_result(DISCOVERY_BODY), ok_result(STATUS_BODY)]))
+    with gzip.open(tmp_path / "capture" / "station_status.jsonl.gz", "rt") as fh:
+        assert len(fh.readlines()) == 4   # 3 stations + poll_log
+
+
+def test_replay_merges_a_capture_directory_in_event_time_order(tmp_path):
+    def write(name, times):
+        with gzip.open(tmp_path / name, "wt") as fh:
+            for t in times:
+                fh.write(json.dumps({"schema_version": 1, "event_type": "poll_log", "poll_id": t,
+                                     "fetched_at": "2026-10-20T14:00:%s.000+00:00" % t,
+                                     "payload": {"job": name}}) + "\n")
+    write("a.jsonl.gz", ["01", "04"])
+    write("b.jsonl.gz", ["02", "03"])
+    prod = FakeProducer()
+    assert replay_capture(str(tmp_path), speed=0, cfg=Config(), producer=prod) == 4
+    assert [m[2]["poll_id"] for m in prod.sent] == ["01", "02", "03", "04"]
+
+
+def test_ensure_topics_is_idempotent_and_raises_on_real_errors():
+    from citibike_producer.create_topics import ensure_topics
+
+    class Fut:
+        def __init__(self, exc=None):
+            self.exc = exc
+
+        def result(self):
+            if self.exc:
+                raise self.exc
+
+    class Admin:
+        def __init__(self, errors):
+            self.errors = errors
+
+        def create_topics(self, new):
+            return {t.topic: Fut(self.errors.get(t.topic)) for t in new}
+
+    out = ensure_topics("x", admin=Admin({TOPIC_STATUS: Exception("TOPIC_ALREADY_EXISTS")}))
+    assert out[TOPIC_STATUS] == "exists" and out[TOPIC_POLL_LOG] == "created"
+    import pytest
+    with pytest.raises(RuntimeError, match=TOPIC_WEATHER):
+        ensure_topics("x", admin=Admin({TOPIC_WEATHER: Exception("POLICY_VIOLATION")}))
 
 
 def test_replay_preserves_event_time_and_marks_replay(tmp_path):
@@ -223,7 +262,7 @@ def test_tee_writes_gzip_jsonl(tmp_path):
     prod = FakeProducer()
     sink = KafkaSink(cfg, producer=prod)
     job = GbfsStationJob(cfg, sink, FakeClient([ok_result(STATUS_BODY)]), FakeRegistry(),
-                         "station_status", "station_status", TOPIC_STATUS, 30)
+                         "station_status", "station_status", TOPIC_STATUS)
     job.run_once()
     sink.close()
     with gzip.open(cfg.tee_path, "rt") as fh:
@@ -237,3 +276,22 @@ def test_parse_discovery():
     assert parse_discovery(body, "en") == {"station_status": "https://a/s", "station_information": "https://a/i"}
     assert parse_discovery(body, "fr")["station_status"] == "https://a/s"   # falls back to first language
     assert parse_discovery({}, "en") == {}
+
+
+def test_synthetic_rejects_too_few_stations(tmp_path):
+    import pytest
+
+    from citibike_producer.synthetic import generate
+    with pytest.raises(ValueError):
+        generate(str(tmp_path / "x.jsonl.gz"), stations=5, minutes=1)
+
+
+def test_synthetic_overwrites_an_existing_capture(tmp_path):
+    from citibike_producer.synthetic import generate
+    path = str(tmp_path / "x.jsonl.gz")
+    generate(path, stations=8, minutes=2)
+    with gzip.open(path, "rt") as fh:
+        first = len(fh.readlines())
+    generate(path, stations=8, minutes=2)
+    with gzip.open(path, "rt") as fh:
+        assert len(fh.readlines()) == first

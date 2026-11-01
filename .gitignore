@@ -1,8 +1,16 @@
 .venv/
 __pycache__/
 .pytest_cache/
-# full captures stay out of git; commit only the sample under data/sample/
-captures/
-logs/*
+.ruff_cache/
+.env
+.devcontainer/.env
+
+# Runtime output stays local; only the replay sample and the .gitkeep placeholders are committed.
 data/*
-!*/.gitkeep
+!data/sample/
+logs/*
+!**/.gitkeep
+
+# Personal tool config and course documents
+opencode.json
+*.pdf

@@ -1,52 +1,28 @@
-"""
-Citibike daily quality DAG
-"""
-import logging
+"""Daily 00:30 UTC: quality report for the previous UTC day (JSON + Markdown under quality/daily/)."""
 from datetime import timedelta
-from pathlib import Path
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
+from _common import DAG_KWARGS, default_args
+from airflow.decorators import dag, task
 
-_logger = logging.getLogger(__name__)
 
-default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'start_date': days_ago(1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=1),
-}
-
-dag = DAG(
-    'citibike_daily_quality',
-    default_args=default_args,
-    description='Daily quality checks',
-    schedule_interval=timedelta(days=1),
-    catchup=False,
-    tags=['citibike', 'quality'],
+@dag(
+    dag_id="citibike_daily_quality",
+    schedule="30 0 * * *",
+    default_args=default_args(retries=1, retry_delay=timedelta(minutes=10), execution_timeout=timedelta(hours=1)),
+    tags=["citibike", "quality"],
+    **DAG_KWARGS,
 )
+def citibike_daily_quality():
+    @task
+    def report(**context):
+        from citibike_pipeline import runtime
+        from citibike_pipeline.quality import daily_quality
+        cfg, storage = runtime.build()
+        day = context["data_interval_start"].date()      # run at 00:30 covers the day that just ended
+        result = daily_quality(storage, cfg, day)
+        return {"day": result["day_utc"], "verdict": result["verdict"]}
+
+    report()
 
 
-def quality_checks(**context):
-    _logger.info("Running daily quality checks...")
-    base_dir = Path('/workspaces/ece-projec/data')
-    try:
-        (base_dir / 'quality').mkdir(parents=True, exist_ok=True)
-        (base_dir / 'ops').mkdir(parents=True, exist_ok=True)
-    except OSError:
-        base_dir = Path('/tmp/data')
-        (base_dir / 'quality').mkdir(parents=True, exist_ok=True)
-        (base_dir / 'ops').mkdir(parents=True, exist_ok=True)
-    _logger.info("Quality checks complete")
-    return "done"
-
-
-quality_task = PythonOperator(
-    task_id='quality_checks',
-    python_callable=quality_checks,
-    dag=dag,
-)
+citibike_daily_quality()

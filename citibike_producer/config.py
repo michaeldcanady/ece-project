@@ -5,20 +5,15 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-# Topic names are part of the pipeline contract (Airflow DAGs read them).
-TOPIC_STATUS = "citibike.station_status"
-TOPIC_INFO = "citibike.station_info"
-TOPIC_WEATHER = "weather.current"
-TOPIC_POLL_LOG = "pipeline.poll_log"
-TOPIC_DLQ = "pipeline.dlq"
-
-# Envelope event_type -> topic. Used by live jobs and by replay.
-TOPIC_BY_EVENT_TYPE = {
-    "station_status": TOPIC_STATUS,
-    "station_information": TOPIC_INFO,
-    "weather_current": TOPIC_WEATHER,
-    "poll_log": TOPIC_POLL_LOG,
-}
+# Topic names are part of the pipeline contract; re-exported here for the producer modules.
+from citibike_contract import (  # noqa: F401
+    TOPIC_BY_EVENT_TYPE,
+    TOPIC_DLQ,
+    TOPIC_INFO,
+    TOPIC_POLL_LOG,
+    TOPIC_STATUS,
+    TOPIC_WEATHER,
+)
 
 
 def _bool(value: str) -> bool:
@@ -45,14 +40,8 @@ class Config:
     weather_lon: float = -73.9840
     weather_location_id: str = "manhattan-midtown"
 
-    status_interval_s: float = 30.0
-    info_interval_s: float = 3600.0
-    weather_interval_s: float = 900.0
-
     http_connect_timeout_s: float = 5.0
     http_read_timeout_s: float = 10.0
-    max_backoff_s: float = 120.0
-    retry_base_s: float = 30.0
 
     # If the feed's own last_updated has not advanced, the content is identical.
     skip_unchanged_feed: bool = True
@@ -60,11 +49,14 @@ class Config:
     producer_version: str = "dev"
     user_agent: str = "ece5874-citibike-pipeline/0.1 (Virginia Tech course project)"
 
-    # Optional local capture of every envelope (gzip JSONL), for the sample dataset.
+    # Optional capture of every envelope for a real sample dataset: one gzip JSONL file per job under
+    # this directory, so concurrently running ingest tasks never append to the same file.
+    capture_dir: Optional[str] = None
+    # Single capture file for one sink (set internally from capture_dir, and by the synthetic generator).
     tee_path: Optional[str] = None
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         d = cls()
         return cls(
             bootstrap_servers=os.environ.get("CB_BOOTSTRAP_SERVERS", d.bootstrap_servers),
@@ -75,15 +67,10 @@ class Config:
             weather_lat=float(os.environ.get("CB_WEATHER_LAT", d.weather_lat)),
             weather_lon=float(os.environ.get("CB_WEATHER_LON", d.weather_lon)),
             weather_location_id=os.environ.get("CB_WEATHER_LOCATION_ID", d.weather_location_id),
-            status_interval_s=float(os.environ.get("CB_STATUS_INTERVAL_S", d.status_interval_s)),
-            info_interval_s=float(os.environ.get("CB_INFO_INTERVAL_S", d.info_interval_s)),
-            weather_interval_s=float(os.environ.get("CB_WEATHER_INTERVAL_S", d.weather_interval_s)),
             http_connect_timeout_s=float(os.environ.get("CB_HTTP_CONNECT_TIMEOUT_S", d.http_connect_timeout_s)),
             http_read_timeout_s=float(os.environ.get("CB_HTTP_READ_TIMEOUT_S", d.http_read_timeout_s)),
-            max_backoff_s=float(os.environ.get("CB_MAX_BACKOFF_S", d.max_backoff_s)),
-            retry_base_s=float(os.environ.get("CB_RETRY_BASE_S", d.retry_base_s)),
             skip_unchanged_feed=_bool(os.environ.get("CB_SKIP_UNCHANGED_FEED", str(d.skip_unchanged_feed))),
             producer_version=os.environ.get("CB_PRODUCER_VERSION", os.environ.get("GIT_SHA", d.producer_version)),
             user_agent=os.environ.get("CB_USER_AGENT", d.user_agent),
-            tee_path=_opt("CB_TEE_PATH"),
+            capture_dir=_opt("CB_CAPTURE_DIR"),
         )

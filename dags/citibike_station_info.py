@@ -1,54 +1,32 @@
-"""
-Citibike station info DAG - hourly processing
-"""
-import logging
+"""Hourly: poll GBFS station_information into Kafka, then rebuild the station dimension from the
+compacted topic. The rebuild runs even if the poll failed: the topic still holds the last good snapshot."""
 from datetime import timedelta
-from pathlib import Path
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
+from _common import DAG_KWARGS, default_args, run_poll
+from airflow.decorators import dag, task
 
-_logger = logging.getLogger(__name__)
 
-default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'start_date': days_ago(1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=1),
-}
-
-dag = DAG(
-    'citibike_station_info',
-    default_args=default_args,
-    description='Process station information (compacted topic)',
-    schedule_interval=timedelta(hours=1),
-    catchup=False,
-    tags=['citibike', 'station-info'],
+@dag(
+    dag_id="citibike_station_info",
+    schedule="5 * * * *",
+    default_args=default_args(retries=2, retry_delay=timedelta(minutes=2), execution_timeout=timedelta(minutes=15)),
+    tags=["citibike", "station-info", "ingest"],
+    **DAG_KWARGS,
 )
+def citibike_station_info():
+    @task
+    def poll(**context):
+        return run_poll("station_information", context)
+
+    @task(trigger_rule="all_done")
+    def build_dim():
+        from citibike_pipeline import runtime
+        from citibike_pipeline.station_info import build_dim_station
+        cfg, storage = runtime.build()
+        with runtime.open_reader(cfg) as reader:
+            return build_dim_station(reader, storage, cfg)
+
+    poll() >> build_dim()
 
 
-def process_station_info(**context):
-    _logger.info("Processing station information...")
-    try:
-        base_dir = Path('/workspaces/ece-projec/data')
-        try:
-            (base_dir / 'curated' / 'dim_station').mkdir(parents=True, exist_ok=True)
-        except OSError:
-            base_dir = Path('/tmp/data')
-            (base_dir / 'curated' / 'dim_station').mkdir(parents=True, exist_ok=True)
-        _logger.info("Station info processed")
-        return "done"
-    except Exception as e:
-        _logger.error(f"Error: {e}")
-        raise
-
-
-process_task = PythonOperator(
-    task_id='process_station_info',
-    python_callable=process_station_info,
-    dag=dag,
-)
+citibike_station_info()

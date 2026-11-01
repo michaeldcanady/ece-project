@@ -1,52 +1,26 @@
-"""
-Citibike compaction DAG - hourly
-"""
-import logging
+"""Hourly: merge per-minute files of completed hours (older than 2 h) into one file per hour."""
 from datetime import timedelta
-from pathlib import Path
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
+from _common import DAG_KWARGS, default_args
+from airflow.decorators import dag, task
 
-_logger = logging.getLogger(__name__)
 
-default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'start_date': days_ago(1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=1),
-}
-
-dag = DAG(
-    'citibike_compaction',
-    default_args=default_args,
-    description='Compact raw data',
-    schedule_interval=timedelta(hours=1),
-    catchup=False,
-    tags=['citibike', 'compaction'],
+@dag(
+    dag_id="citibike_compaction",
+    schedule="20 * * * *",
+    default_args=default_args(retries=1, retry_delay=timedelta(minutes=5), execution_timeout=timedelta(minutes=30)),
+    tags=["citibike", "compaction"],
+    **DAG_KWARGS,
 )
+def citibike_compaction():
+    @task
+    def compact():
+        from citibike_pipeline import runtime
+        from citibike_pipeline.compaction import compact_due
+        _, storage = runtime.build()
+        return compact_due(storage)
+
+    compact()
 
 
-def compact_data(**context):
-    _logger.info("Compacting data...")
-    base_dir = Path('/workspaces/ece-projec/data')
-    try:
-        (base_dir / 'raw').mkdir(parents=True, exist_ok=True)
-        (base_dir / 'curated').mkdir(parents=True, exist_ok=True)
-    except OSError:
-        base_dir = Path('/tmp/data')
-        (base_dir / 'raw').mkdir(parents=True, exist_ok=True)
-        (base_dir / 'curated').mkdir(parents=True, exist_ok=True)
-    _logger.info("Compaction complete")
-    return "done"
-
-
-compact_task = PythonOperator(
-    task_id='compact',
-    python_callable=compact_data,
-    dag=dag,
-)
+citibike_compaction()

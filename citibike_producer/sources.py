@@ -85,12 +85,25 @@ class FeedRegistry:
 
     def url_for(self, feed_name: str) -> Optional[str]:
         with self._lock:
-            stale = (time.monotonic() - self._loaded_at) > self._cfg.discovery_refresh_s
+            stale = (time.time() - self._loaded_at) > self._cfg.discovery_refresh_s
             if feed_name in self._urls and not stale:
                 return self._urls[feed_name]
         self.refresh()
         with self._lock:
             return self._urls.get(feed_name)
+
+    def state(self) -> Dict[str, Any]:
+        """The cached discovery result, so the next task run can skip re-fetching gbfs.json."""
+        with self._lock:
+            return {"urls": dict(self._urls), "version": self._version, "loaded_at": self._loaded_at}
+
+    def restore(self, state: Optional[Dict[str, Any]]) -> None:
+        if not state or not state.get("urls"):
+            return
+        with self._lock:
+            self._urls = dict(state["urls"])
+            self._version = state.get("version")
+            self._loaded_at = float(state.get("loaded_at") or 0.0)
 
     def invalidate(self) -> None:
         """Force rediscovery on next use (e.g. after a 404 on a feed URL)."""
@@ -109,7 +122,7 @@ class FeedRegistry:
         with self._lock:
             self._urls = urls
             self._version = res.body.get("version")
-            self._loaded_at = time.monotonic()
+            self._loaded_at = time.time()
         log.info("GBFS discovery ok: version=%s feeds=%s", self._version, sorted(urls))
         return True
 

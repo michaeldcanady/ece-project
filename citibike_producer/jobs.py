@@ -2,22 +2,26 @@
 
 The producer does not clean or reshape payloads: validation, dedup and
 enrichment belong to the Airflow micro-batch. Station dicts are forwarded as received.
+Scheduling and retries belong to Airflow (dags/citibike_ingest_*.py); a job only knows how to poll once.
+State that must survive between polls (last feed timestamp, failure count) is exported with
+`state()` and restored with `restore()`, so the caller can keep it between task runs.
 """
 from __future__ import annotations
 
 import logging
-import threading
-import time
 import uuid
 from typing import Any, Dict, Optional
 
-from .config import (
-    Config, TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER,
-)
+from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
 from .envelope import iso_to_epoch_ms, make_envelope, utc_now_iso
 from .sink import DeliveryBatch, KafkaSink
 from .sources import (
-    FeedRegistry, FetchResult, HttpClient, OUTCOME_HTTP, OUTCOME_PARSE, fetch_weather,
+    OUTCOME_HTTP,
+    OUTCOME_PARSE,
+    FeedRegistry,
+    FetchResult,
+    HttpClient,
+    fetch_weather,
 )
 
 log = logging.getLogger(__name__)
@@ -35,12 +39,21 @@ _SUCCESS = (OUTCOME_OK, OUTCOME_SKIPPED)
 class Job:
     name = "job"
 
-    def __init__(self, cfg: Config, sink: KafkaSink, interval_s: float):
+    def __init__(self, cfg: Config, sink: KafkaSink):
         self.cfg = cfg
         self.sink = sink
-        self.interval_s = interval_s
         self.consecutive_failures = 0
+        self.last_outcome: Optional[str] = None
+        self.last_error: Optional[str] = None
         self._last_feed_updated: Optional[int] = None
+
+    def state(self) -> Dict[str, Any]:
+        return {"last_feed_updated": self._last_feed_updated, "consecutive_failures": self.consecutive_failures}
+
+    def restore(self, state: Optional[Dict[str, Any]]) -> None:
+        state = state or {}
+        self._last_feed_updated = state.get("last_feed_updated")
+        self.consecutive_failures = int(state.get("consecutive_failures") or 0)
 
     def run_once(self) -> bool:  # pragma: no cover - interface
         raise NotImplementedError
@@ -51,6 +64,7 @@ class Job:
                 batch: Optional[DeliveryBatch] = None, error: Optional[str] = None) -> bool:
         ok = outcome in _SUCCESS
         self.consecutive_failures = 0 if ok else self.consecutive_failures + 1
+        self.last_outcome, self.last_error = outcome, error
         payload: Dict[str, Any] = {
             "job": self.name,
             "outcome": outcome,
@@ -78,11 +92,11 @@ class Job:
 
 
 class GbfsStationJob(Job):
-    """station_status (30 s) and station_information (hourly): one message per station."""
+    """station_status (every minute) and station_information (hourly): one message per station."""
 
     def __init__(self, cfg: Config, sink: KafkaSink, client: HttpClient, registry: FeedRegistry,
-                 feed_name: str, event_type: str, topic: str, interval_s: float):
-        super().__init__(cfg, sink, interval_s)
+                 feed_name: str, event_type: str, topic: str):
+        super().__init__(cfg, sink)
         self.name = feed_name
         self.client = client
         self.registry = registry
@@ -135,7 +149,7 @@ class WeatherJob(Job):
     name = "weather"
 
     def __init__(self, cfg: Config, sink: KafkaSink, client: HttpClient):
-        super().__init__(cfg, sink, cfg.weather_interval_s)
+        super().__init__(cfg, sink)
         self.client = client
 
     def run_once(self) -> bool:
@@ -173,30 +187,3 @@ class WeatherJob(Job):
         err = batch.last_error or "%d messages undelivered after flush" % remaining
         return self._finish(poll_id, SOURCE_WEATHER, res.url, res, OUTCOME_KAFKA, batch=batch, error=err, **common)
 
-
-def retry_delay(job: Job, cfg: Config) -> float:
-    """Delay before the next attempt after a failure: exponential from retry_base_s, capped."""
-    base = min(job.interval_s, cfg.retry_base_s)
-    cap = min(job.interval_s, cfg.max_backoff_s)
-    return min(base * (2 ** max(job.consecutive_failures - 1, 0)), cap)
-
-
-def run_loop(job: Job, cfg: Config, stop: threading.Event) -> None:
-    """Drift-free scheduler. A job exception never kills the loop."""
-    next_run = time.monotonic()
-    while not stop.is_set():
-        try:
-            ok = job.run_once()
-        except Exception:   # noqa: BLE001 - the loop must survive anything
-            log.exception("%s: unhandled error in run_once", job.name)
-            job.consecutive_failures += 1
-            ok = False
-        now = time.monotonic()
-        if ok:
-            next_run += job.interval_s
-            if next_run <= now:   # fell behind (slow poll, suspended host): resume without bursting
-                log.warning("%s: behind schedule by %.1fs", job.name, now - next_run)
-                next_run = now + 1.0
-        else:
-            next_run = now + retry_delay(job, cfg)
-        stop.wait(timeout=max(next_run - time.monotonic(), 0.0))

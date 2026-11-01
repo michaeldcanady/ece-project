@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import gzip
-import json
 import logging
 import threading
 from typing import Any, Dict, Optional
@@ -80,8 +79,8 @@ class KafkaSink:
         """Returns the number of messages still undelivered after the timeout."""
         return int(self._p.flush(timeout))
 
-    def close(self) -> None:
-        remaining = self.flush(30.0)
+    def close(self, timeout: float = 30.0) -> None:
+        remaining = self.flush(timeout)
         if remaining:
             log.error("%d messages undelivered at shutdown", remaining)
         if self._tee is not None:

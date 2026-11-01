@@ -2,19 +2,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-SCHEMA_VERSION = 1
-
-
-def utc_now_iso() -> str:
-    """UTC timestamp with millisecond precision, e.g. 2026-10-20T14:15:00.123+00:00."""
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-
-
-def iso_to_epoch_ms(iso: str) -> int:
-    return int(datetime.fromisoformat(iso).timestamp() * 1000)
+from citibike_contract import SCHEMA_VERSION, iso_to_epoch_ms, utc_now_iso  # noqa: F401
 
 
 def make_envelope(

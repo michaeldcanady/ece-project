@@ -1,7 +1,7 @@
 [project]
-name = "citibike-producer"
+name = "citibike-pipeline"
 version = "0.1.0"
-description = "Citi Bike GBFS and Open-Meteo producer for the Stream-Visualization pipeline"
+description = "Citi Bike GBFS + Open-Meteo stream pipeline: Airflow DAGs for Kafka ingest and micro-batches"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -10,18 +10,34 @@ dependencies = [
 ]
 
 [project.scripts]
-citibike-producer = "citibike_producer.__main__:main"
-citibike-create-topics = "citibike_producer.create_topics:main"
+citibike-sample = "citibike_producer.synthetic:main"
+citibike-status = "citibike_pipeline.status:main"
 
 [dependency-groups]
-dev = ["pytest>=7"]
+# Everything runs in the Airflow image, which provides pyarrow/boto3 pinned by Airflow's constraints.
+# They are dev-only here so the libraries can be tested locally.
+dev = ["pytest>=7", "pyarrow>=11", "boto3>=1.28", "moto[s3]>=4.2", "ruff>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["citibike_producer"]
+packages = ["citibike_contract", "citibike_producer", "citibike_pipeline"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "I", "UP"]
+# House style: typing.Optional/Dict/List and %-formatting (Airflow 2.7 and the producer image run Python 3.9).
+ignore = ["UP006", "UP007", "UP031", "UP035", "UP045"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["citibike_contract", "citibike_producer", "citibike_pipeline"]
+# dags/ imports its sibling _common the way Airflow does (the DAG folder is on sys.path).
+known-third-party = ["_common"]

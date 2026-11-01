@@ -1,82 +1,69 @@
 [env]
 CB_BOOTSTRAP_SERVERS = "kafka:9092"
+AIRFLOW_URL = "http://airflow:8080"
+AIRFLOW_AUTH = "admin:admin"   # dev only, matches docker-compose.yml
 
 [tools]
 python = "3.9"
 uv = "latest"
 
+# Everything that runs is an Airflow DAG; these tasks inspect the stack or trigger DAGs from the dev shell.
+# They run inside the dev container (the hostnames `kafka` and `airflow` only resolve there).
+# kcat is installed by .devcontainer/Dockerfile; the Kafka CLIs are not available in this container.
+
 [tasks."broker:check"]
-description = "Check if Kafka broker is reachable"
+description = "Fail unless the Kafka broker is reachable and the pipeline topics exist"
 run = '''
+set -e
 echo "CB_BOOTSTRAP_SERVERS=$CB_BOOTSTRAP_SERVERS"
-echo "Checking Kafka connectivity..."
-kafka-topics --bootstrap-server $CB_BOOTSTRAP_SERVERS --list 2>&1 | head -10 || echo "Note: kafka-topics CLI may not be installed, but that's okay"
+topics=$(kcat -b "$CB_BOOTSTRAP_SERVERS" -L -J | python3 -c "import sys,json; print(' '.join(sorted(t['topic'] for t in json.load(sys.stdin)['topics'])))")
+echo "topics: $topics"
+for t in citibike.station_status citibike.station_info weather.current pipeline.poll_log pipeline.dlq; do
+  case " $topics " in *" $t "*) ;; *) echo "MISSING topic $t (trigger: mise run dag:trigger citibike_setup)"; exit 1;; esac
+done
 '''
 
-[tasks."kafka:create-topics"]
-description = "Create all Kafka topics needed by the producer"
-run = "uv run citibike-create-topics --replication 1"
-
-[tasks."capture:live"]
-description = "Generate a sample capture file using tee from live GBFS/Open-Meteo feeds (requires internet)"
+[tasks."dag:trigger"]
+description = "Trigger a DAG run: mise run dag:trigger <dag_id> ['<json conf>']"
+usage = '''
+arg "<dag_id>" help="e.g. citibike_setup, citibike_replay"
+arg "[conf]" help="JSON run config, e.g. {\"speed\": 60}" default="{}"
+'''
 run = '''
-export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
-echo "Writing capture to $CB_TEE_PATH"
-echo "This will poll for ~70 seconds to capture at least one status poll..."
-timeout 70 uv run citibike-producer live
-echo "Capture complete. File: $CB_TEE_PATH"
-ls -lh $CB_TEE_PATH 2>&1 || echo "Warning: Capture file may not exist if no data was written"
+set -e
+curl -sS --fail-with-body -u "$AIRFLOW_AUTH" -H 'Content-Type: application/json' \
+  -X POST "$AIRFLOW_URL/api/v1/dags/$usage_dag_id/dagRuns" -d "{\"conf\": $usage_conf}"
+echo
 '''
 
 [tasks."capture:synthetic"]
-description = "Generate a synthetic sample capture (works offline)"
-run = '''
-export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
-echo "Generating synthetic sample to $CB_TEE_PATH"
-python3 scripts/make_sample_capture.py $CB_TEE_PATH
-ls -lh $CB_TEE_PATH
-'''
+description = "Regenerate the synthetic sample capture (offline), written to data/sample/"
+run = "uv run citibike-sample data/sample/sample_capture.jsonl.gz --start 2026-10-20T12:00:00Z --minutes 45"
 
 [tasks."kafka:replay"]
-description = "Replay a captured sample against Kafka"
-run = '''
-export CB_TEE_PATH=${CB_TEE_PATH:-/tmp/citibike_sample.jsonl.gz}
-if [ ! -f "$CB_TEE_PATH" ]; then
-  echo "Error: Capture file $CB_TEE_PATH not found."
-  echo "Run 'mise run capture:live' first to generate one."
-  exit 1
-fi
-echo "Replaying $CB_TEE_PATH against $CB_BOOTSTRAP_SERVERS (speed=60)..."
-uv run citibike-producer replay $CB_TEE_PATH --speed 60
-echo "Replay complete!"
-'''
+description = "Replay the committed sample through Kafka at 60x (citibike_replay DAG)"
+run = "mise run dag:trigger citibike_replay '{\"speed\": 60}'"
 
 [tasks."kafka:consume-status"]
-description = "Consume a few messages from citibike.station_status topic"
-run = '''
-echo "Consuming from citibike.station_status..."
-kafka-console-consumer --bootstrap-server $CB_BOOTSTRAP_SERVERS --topic citibike.station_status --from-beginning --max-messages 3 2>&1 | tail -n 40
-'''
+description = "Show the 3 oldest messages of citibike.station_status"
+run = 'kcat -b "$CB_BOOTSTRAP_SERVERS" -t citibike.station_status -C -o beginning -c 3 -e -q'
 
 [tasks."kafka:consume-poll"]
-description = "Consume a few messages from pipeline.poll_log topic"
-run = '''
-echo "Consuming from pipeline.poll_log..."
-kafka-console-consumer --bootstrap-server $CB_BOOTSTRAP_SERVERS --topic pipeline.poll_log --from-beginning --max-messages 2 2>&1 | tail -n 40
-'''
+description = "Show the 3 newest messages of pipeline.poll_log"
+run = 'kcat -b "$CB_BOOTSTRAP_SERVERS" -t pipeline.poll_log -C -o -3 -c 3 -e -q'
 
 [tasks."kafka:verify"]
 description = "Verify messages in both main topics"
 depends = ["kafka:consume-status", "kafka:consume-poll"]
 
+[tasks.lint]
+description = "Lint (ruff)"
+run = "uv run ruff check ."
+
 [tasks."test:unit"]
-description = "Run unit tests (no network/broker needed)"
+description = "Run the tests (no network or broker needed)"
 run = "uv run pytest -v"
 
 [tasks."smoke:replay"]
-description = "Full Option A flow: check broker, create topics, capture, and replay"
-depends = ["broker:check", "kafka:create-topics", "capture:live", "kafka:replay"]
-
-[tasks."smoke:replay-quick"]
-description = "Quick replay flow assuming capture already exists"
-depends = ["broker:check", "kafka:create-topics", "kafka:replay"]
+description = "Replay the committed sample through the running stack"
+depends = ["broker:check", "kafka:replay"]
