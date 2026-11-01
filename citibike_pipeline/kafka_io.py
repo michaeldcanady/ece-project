@@ -35,6 +35,27 @@ def total_messages(ranges: Ranges) -> int:
     return sum(e - s for parts in ranges.values() for (s, e) in parts.values())
 
 
+def cap_ranges(positions: Ranges, max_per_partition: Optional[int] = None) -> Ranges:
+    """The non-empty (start, end) ranges of `positions`, at most `max_per_partition` long."""
+    ranges: Ranges = {}
+    for topic, parts in positions.items():
+        for pid, (start, high) in parts.items():
+            end = high if max_per_partition is None else min(high, start + max_per_partition)
+            if end > start:
+                ranges.setdefault(topic, {})[pid] = (start, end)
+    return ranges
+
+
+def fits_within(ranges: Ranges, positions: Ranges) -> bool:
+    """True if every range starts where `positions` starts and ends at or below its high watermark."""
+    for topic, parts in ranges.items():
+        for pid, (start, end) in parts.items():
+            pos = positions.get(topic, {}).get(pid)
+            if pos is None or pos[0] != start or end > pos[1]:
+                return False
+    return True
+
+
 class KafkaBatchReader:
     def __init__(self, bootstrap_servers: str, group_id: str, consumer: Any = None):
         if consumer is None:
@@ -50,9 +71,14 @@ class KafkaBatchReader:
     def plan(self, topics: List[str], max_per_partition: Optional[int] = None,
              from_committed: bool = True) -> Ranges:
         """Next range per partition: committed (or low watermark) up to the high watermark."""
+        return cap_ranges(self.positions(topics, from_committed), max_per_partition)
+
+    def positions(self, topics: List[str], from_committed: bool = True) -> Ranges:
+        """(start, high watermark) for every partition, including empty ones. The start is the committed
+        offset, or the low watermark when nothing is committed or retention has passed the commit."""
         from confluent_kafka import TopicPartition
 
-        ranges: Ranges = {}
+        positions: Ranges = {}
         for topic in topics:
             md = self._c.list_topics(topic, timeout=10)
             tmeta = md.topics.get(topic)
@@ -66,10 +92,8 @@ class KafkaBatchReader:
                     committed = self._c.committed([tp], timeout=10)[0].offset
                     if committed is not None and committed >= 0:
                         start = max(committed, low)   # retention may have advanced past the commit
-                end = high if max_per_partition is None else min(high, start + max_per_partition)
-                if end > start:
-                    ranges.setdefault(topic, {})[pid] = (start, end)
-        return ranges
+                positions.setdefault(topic, {})[pid] = (start, high)
+        return positions
 
     def read(self, ranges: Ranges, timeout_s: float) -> List[Record]:
         """Read exactly the planned ranges. Raises on timeout rather than returning a short batch."""

@@ -72,6 +72,73 @@ def test_plan_is_stable_across_retries_and_advances_after_commit(tmp_path, captu
     assert batch.plan_batch("run_1", reader, storage, cfg)["ranges"] == p1["ranges"]
 
 
+def _hold_back_half(consumer):
+    """Remove the newer half of every partition (to be ingested later); returns it."""
+    held = {tp: log[len(log) // 2:] for tp, log in consumer.log.items()}
+    for tp in consumer.log:
+        consumer.log[tp] = consumer.log[tp][:len(consumer.log[tp]) // 2]
+    return held
+
+
+def _rows_by_offset(storage, prefix):
+    rows = [r for k in storage.list(prefix + "/") if k.endswith(".parquet")
+            for r in read_parquet(storage, k).to_pylist()]
+    return len(rows), len({(r["kafka_topic"], r["kafka_partition"], r["kafka_offset"]) for r in rows})
+
+
+def test_next_run_after_a_failed_run_reuses_its_plan_and_leaves_no_duplicates(tmp_path, capture):
+    cfg = PipelineConfig(local_root=str(tmp_path), read_timeout_s=5)        # no cap: one batch takes all
+    consumer = load_capture(capture)
+    storage, reader = LocalStorage(str(tmp_path)), KafkaBatchReader("x", "g", consumer=consumer)
+    held = _hold_back_half(consumer)
+    # run_0 writes every output but never commits (finalize failed on every retry)
+    p0 = batch.plan_batch("run_0", reader, storage, cfg)
+    s0 = batch.process_batch(p0, reader, storage, cfg)
+    batch.compute_metrics(p0, s0, storage, cfg)
+    for tp, rest in held.items():                                           # ingest kept running
+        consumer.log[tp] += rest
+    p1 = batch.plan_batch("run_1", reader, storage, cfg)
+    assert (p1["batch_id"], p1["ranges"], p1["first_run_id"], p1["run_id"]) == \
+        (p0["batch_id"], p0["ranges"], "run_0", "run_1")
+    s1 = batch.process_batch(p1, reader, storage, cfg)
+    entry = batch.finalize_batch(p1, s1, batch.compute_metrics(p1, s1, storage, cfg), reader, storage, cfg)
+    assert entry["run_id"] == "run_1"
+    for prefix in (lake.CURATED_STATUS, "raw/station_status", lake.DLQ):      # one row per Kafka offset
+        rows, distinct = _rows_by_offset(storage, prefix)
+        assert rows == distinct > 0, prefix
+    gold_batches = {r["batch_id"] for k in storage.list(lake.GOLD_WINDOW + "/")
+                    for r in read_parquet(storage, k).to_pylist()}
+    assert gold_batches == {p0["batch_id"]}
+    # committed: the pending plan is gone, and the next plan starts where this one ended
+    assert not storage.exists(batch.PENDING_PLAN)
+    p2 = batch.plan_batch("run_2", reader, storage, cfg)
+    assert p2["batch_id"] != p0["batch_id"] and p2["total_messages"] > 0
+    for topic, parts in p2["ranges"].items():
+        for part, (start, _end) in parts.items():
+            assert start == p0["ranges"][topic][part][1]
+
+
+def test_pending_plan_is_dropped_when_its_offsets_no_longer_exist(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    stale = batch.plan_batch("run_0", reader, storage, cfg)
+    # broker reset: topics recreated, fewer messages than the pending plan expects, nothing committed
+    _hold_back_half(consumer)
+    _hold_back_half(consumer)
+    fresh = batch.plan_batch("run_1", reader, storage, cfg)
+    assert fresh["batch_id"] != stale["batch_id"] and fresh["first_run_id"] == "run_1"
+    assert batch.process_batch(fresh, reader, storage, cfg)["records_read"] == fresh["total_messages"]
+
+
+def test_an_empty_plan_is_never_saved_as_pending(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    saved = dict(consumer.log)
+    consumer.log.clear()                                                    # idle: nothing to read
+    assert batch.plan_batch("run_0", reader, storage, cfg)["total_messages"] == 0
+    assert not storage.exists(batch.PENDING_PLAN)
+    consumer.log.update(saved)                                              # data arrives
+    assert batch.plan_batch("run_1", reader, storage, cfg)["total_messages"] > 0
+
+
 def test_full_drain_commits_everything_and_loses_nothing(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     plans = drain(reader, storage, cfg)

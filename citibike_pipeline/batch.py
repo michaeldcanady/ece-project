@@ -1,8 +1,10 @@
 """Micro-batch logic: plan -> process -> metrics -> finalize.
 
-Idempotency: the plan is written once per run and reused on retry; every output key derives from
-batch_id (a hash of the planned offset ranges); offsets are committed last. A retry therefore
-re-reads the same offsets and overwrites the same keys.
+Idempotency: a plan is identified by where it starts (the committed offsets), not by the Airflow run.
+Until finalize commits, every run gets the same plan back: a task retry, and also the next scheduled
+run after a run failed for good. Every output key derives from batch_id (a hash of the planned offset
+ranges) and offsets are committed last, so any rerun re-reads the same offsets and overwrites the
+same keys instead of writing a second copy under a new batch_id.
 """
 from __future__ import annotations
 
@@ -22,7 +24,15 @@ from citibike_contract import EVENT_TYPE_BY_TOPIC
 
 from . import lake
 from .config import DATA_TOPICS, PipelineConfig
-from .kafka_io import KafkaBatchReader, Record, ranges_from_json, ranges_to_json, total_messages
+from .kafka_io import (
+    KafkaBatchReader,
+    Record,
+    cap_ranges,
+    fits_within,
+    ranges_from_json,
+    ranges_to_json,
+    total_messages,
+)
 from .metrics import Obs, pct, station_state, window_metrics
 from .schemas import (
     BATCH_LOG,
@@ -62,17 +72,29 @@ def safe_id(run_id: str) -> str:
 # plan
 # ---------------------------------------------------------------------------------------------
 
+PENDING_PLAN = "ops/batch_plan/pending.json"
+
+
 def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                now: Optional[datetime] = None) -> Dict[str, Any]:
-    key = "ops/batch_plan/%s.json" % safe_id(run_id)
-    if storage.exists(key):
-        return get_json(storage, key)            # retry: reuse the original plan
-    ranges = reader.plan(DATA_TOPICS, cfg.max_batch_per_partition)
-    rj = ranges_to_json(ranges)
-    batch_id = "b" + hashlib.sha1(json.dumps(rj, sort_keys=True).encode()).hexdigest()[:12]
-    plan = {"run_id": run_id, "batch_id": batch_id, "planned_at": iso(now or utcnow()),
-            "ranges": rj, "total_messages": total_messages(ranges)}
-    put_json(storage, key, plan)
+    """The batch to process next. Reuses the pending (planned, not yet committed) plan when it still
+    starts at the committed offsets and all its offsets still exist, so a rerun of a failed batch keeps
+    its batch_id. Otherwise, e.g. after a broker reset recreated the topics, it plans afresh."""
+    positions = reader.positions(DATA_TOPICS)
+    pending = get_json(storage, PENDING_PLAN) if storage.exists(PENDING_PLAN) else None
+    if pending is not None and fits_within(ranges_from_json(pending["ranges"]), positions):
+        plan = dict(pending, run_id=run_id)
+        if pending["first_run_id"] != run_id:
+            log.warning("reusing uncommitted plan %s first made by run %s", plan["batch_id"], plan["first_run_id"])
+    else:
+        ranges = cap_ranges(positions, cfg.max_batch_per_partition)
+        rj = ranges_to_json(ranges)
+        batch_id = "b" + hashlib.sha1(json.dumps(rj, sort_keys=True).encode()).hexdigest()[:12]
+        plan = {"run_id": run_id, "first_run_id": run_id, "batch_id": batch_id, "planned_at": iso(now or utcnow()),
+                "ranges": rj, "total_messages": total_messages(ranges)}
+        if plan["total_messages"]:
+            put_json(storage, PENDING_PLAN, plan)
+    put_json(storage, "ops/batch_plan/%s.json" % safe_id(run_id), plan)      # per-run audit record
     return plan
 
 
@@ -466,6 +488,8 @@ def finalize_batch(plan: Dict[str, Any], stats: Dict[str, Any], publish: Dict[st
     put_parquet(storage, lake.SERVING_BATCH_LOG, to_table(recent, BATCH_LOG))
 
     reader.commit(ranges_from_json(plan["ranges"]))          # last: only after every output exists
+    if storage.exists(PENDING_PLAN) and get_json(storage, PENDING_PLAN)["batch_id"] == plan["batch_id"]:
+        storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
     log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan["batch_id"], entry["latency_p50_s"],
              entry["latency_p95_s"])
     return {k: (iso(v) if isinstance(v, datetime) else v) for k, v in entry.items()}

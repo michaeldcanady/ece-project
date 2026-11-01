@@ -148,9 +148,13 @@ Replay into a clean lake. Serving time never moves backwards, so replaying older
 
   `pipeline.poll_log` records every poll attempt: outcome, HTTP latency and delivery counts.
 - **Exactly the planned offsets, committed last.**
-  - `plan_batch` writes `ops/batch_plan/<run_id>.json` once.
-  - A retry reuses that plan, so it re-reads the same offsets and overwrites the same keys, which are derived from a
-    hash of the offset ranges.
+  - `plan_batch` saves the plan as `ops/batch_plan/pending.json` until `finalize` commits it (plus a per-run
+    record, `ops/batch_plan/<run_id>.json`).
+  - Until then every run gets that same plan back: a task retry, and also the next run after a run failed for good.
+    So a rerun re-reads the same offsets and overwrites the same keys, which are derived from a hash of the offset
+    ranges, instead of leaving a second copy behind.
+  - The pending plan is dropped if it no longer starts at the committed offsets or its offsets no longer exist (a
+    broker reset).
   - Kafka offsets are committed in `finalize`, after every output exists.
 - **Event time everywhere.** Windows and `as_of` come from observation times, never the wall clock, so replay
   behaves like live. Latency is the time the serving files were written minus `fetched_at` (or minus `replayed_at`
