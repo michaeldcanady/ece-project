@@ -62,8 +62,12 @@ class LocalStorage(Storage):
         return os.path.isfile(self._path(key))
 
     def list(self, prefix: str) -> List[str]:
+        # Walk only the directory the prefix points into, not the whole lake: keys are paths, so every
+        # match lives under the prefix's last "/". The cost then scales with the prefix, not the lake.
+        head = prefix.rsplit("/", 1)[0] if "/" in prefix else ""
+        base = self._path(head) if head else self.root
         out = []
-        for dirpath, _dirs, files in os.walk(self.root):
+        for dirpath, _dirs, files in os.walk(base):
             for name in files:
                 if name.endswith(".tmp"):
                     continue
