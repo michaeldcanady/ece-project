@@ -54,8 +54,10 @@ def compact_partition(storage: Storage, prefix: str, dt: str, hr: int, sort_cols
 
 
 def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int = 2) -> Dict[str, Dict[str, int]]:
-    """Compact hours that ended at least `lag_hours` ago, so they cannot overlap the micro-batch's
-    30-minute lookback (which would race with deletes)."""
+    """Compact hours that ended at least `lag_hours` ago. The lag keeps compaction away from the hours
+    the micro-batch is still writing; it is not what makes concurrent reads safe. Readers re-read an
+    hour that changes under them (lake._read_hour, lake.read_batch_file), because lookbacks (3 h for
+    weather), catch-up and replay all reach hours older than the lag."""
     now = now or utcnow()
     cutoff = now - timedelta(hours=lag_hours)
     result: Dict[str, Dict[str, int]] = {}
