@@ -14,3 +14,4 @@ logs/*
 # Personal tool config and course documents
 opencode.json
 *.pdf
+.claude/

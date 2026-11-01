@@ -1,11 +1,11 @@
 {
-  "name": "Python 3.9 (uv) - Kafka & Airflow",
+  "name": "Python 3.9 (mise) - Kafka & Airflow",
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspaces/ece-projec",
   "shutdownAction": "stopCompose",
   "features": {
-    "ghcr.io/devcontainers-extra/features/uv:1": {}
+    "ghcr.io/devcontainers-extra/features/mise:1": {}
   },
   "customizations": {
     "vscode": {
@@ -22,7 +22,7 @@
   },
   "remoteUser": "root",
   "updateRemoteUserUID": false,
-  "postCreateCommand": "uv sync --locked --all-groups",
+  "postCreateCommand": "mise trust --yes && mise install && mise run sync",
   "remoteEnv": {
     "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}",
     "UV_LINK_MODE": "copy",

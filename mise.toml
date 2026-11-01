@@ -7,8 +7,22 @@ AIRFLOW_AUTH = "admin:admin"   # dev only, matches docker-compose.yml
 python = "3.9"
 uv = "latest"
 
-# Everything that runs is an Airflow DAG; these tasks inspect the stack or trigger DAGs from the dev shell.
-# They run inside the dev container (the hostnames `kafka` and `airflow` only resolve there).
+# mise is the interface to the project: every command a person runs is a task here (`mise tasks` lists them).
+# uv is only the package manager the tasks call. The pipeline itself runs as Airflow DAGs; these tasks set up
+# the dev environment, inspect the stack and trigger DAGs. They run inside the dev container (the hostnames
+# `kafka` and `airflow` only resolve there).
+
+[tasks.sync]
+description = "Install the locked dependencies into .venv (run by the dev container on create)"
+run = "uv sync --locked --all-groups"
+
+[tasks.lock]
+description = "Re-resolve uv.lock after editing dependencies in pyproject.toml"
+run = "uv lock"
+
+[tasks.status]
+description = "Lake health: last batch age, stations, at-risk counts, latency (fails if stale)"
+run = "uv run citibike-status"
 
 [tasks."broker:check"]
 description = "Fail unless the Kafka broker is reachable and the pipeline topics exist"
@@ -51,7 +65,7 @@ depends = ["kafka:consume-status", "kafka:consume-poll"]
 description = "Lint (ruff)"
 run = "uv run ruff check ."
 
-[tasks."test:unit"]
+[tasks.test]
 description = "Run the tests (no network or broker needed)"
 run = "uv run pytest -v"
 
