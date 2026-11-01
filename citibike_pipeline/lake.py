@@ -56,6 +56,38 @@ def hours_between(start: datetime, end: datetime) -> Iterable[datetime]:
         cur += timedelta(hours=1)
 
 
+def _read_hour(storage: Storage, hour_prefix: str, columns: List[str],
+               exclude_batch: Optional[str]) -> List[pa.Table]:
+    """Every file of one hour partition, consistent with a concurrent compaction.
+
+    Compaction writes compacted.parquet before deleting the minute files it merged. If a listed file
+    vanishes, the hour was compacted mid-read: list it again and re-read the whole hour (the merged
+    rows are now in compacted.parquet; overlaps are removed later by dedupe_identity). A file that
+    vanishes twice is not compaction, so it raises instead of silently dropping rows.
+    """
+    for attempt in (1, 2):
+        try:
+            return [read_parquet(storage, key, columns=columns)
+                    for key in storage.list(hour_prefix)
+                    if key.endswith(".parquet")
+                    and not (exclude_batch and key.endswith("/%s.parquet" % exclude_batch))]
+        except FileNotFoundError as exc:
+            if attempt == 2:
+                raise
+            log.info("%s changed while reading (%s), re-reading the hour after compaction", hour_prefix, exc)
+    raise AssertionError("unreachable")
+
+
+def read_batch_file(storage: Storage, key: str, batch_id: str, columns: List[str]) -> pa.Table:
+    """The rows a batch wrote to `key`, also after compaction merged that file into compacted.parquet."""
+    try:
+        return read_parquet(storage, key, columns=columns)
+    except FileNotFoundError:
+        merged = key.rsplit("/", 1)[0] + "/" + COMPACTED_NAME
+        table = read_parquet(storage, merged, columns=sorted(set(columns) | {"batch_id"}))
+        return table.filter(pc.equal(table["batch_id"], batch_id)).select(columns)
+
+
 def load_window(storage: Storage, prefix: str, start: datetime, end: datetime,
                 columns: List[str], exclude_batch: Optional[str] = None,
                 time_col: str = "fetched_at") -> pa.Table:
@@ -63,18 +95,11 @@ def load_window(storage: Storage, prefix: str, start: datetime, end: datetime,
 
     `columns` must include the Kafka identity columns and `time_col`. Files written by
     `exclude_batch` are skipped so a retry never reads its own earlier output.
+    Safe to run while compaction merges the same hours (see _read_hour).
     """
     tables: List[pa.Table] = []
     for hour in hours_between(start, end):
-        for key in storage.list(partition_path(prefix, hour) + "/"):
-            if not key.endswith(".parquet"):
-                continue
-            if exclude_batch and key.endswith("/%s.parquet" % exclude_batch):
-                continue
-            try:
-                tables.append(read_parquet(storage, key, columns=columns))
-            except FileNotFoundError:
-                log.warning("file vanished while reading (compaction?): %s", key)
+        tables.extend(_read_hour(storage, partition_path(prefix, hour) + "/", columns, exclude_batch))
     if not tables:
         return pa.Table.from_pylist([], schema=pa.schema([(c, pa.null()) for c in columns]))
     table = dedupe_identity(pa.concat_tables(tables))

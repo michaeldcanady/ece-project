@@ -6,9 +6,7 @@ name: ece-projec
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: mcr.microsoft.com/devcontainers/python:3.9   # tools come from devcontainer.json features
     volumes:
       - ..:/workspaces/ece-projec
       - lake:/lake:ro                      # inspect the local lake from the dev shell

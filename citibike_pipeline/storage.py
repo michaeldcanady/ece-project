@@ -5,7 +5,7 @@ import io
 import json
 import os
 import tempfile
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Protocol
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -13,24 +13,19 @@ import pyarrow.parquet as pq
 from .config import PipelineConfig
 
 
-class Storage:
-    def put(self, key: str, data: bytes) -> None:  # pragma: no cover - interface
-        raise NotImplementedError
+class Storage(Protocol):
+    def put(self, key: str, data: bytes) -> None: ...
 
-    def get(self, key: str) -> bytes:  # pragma: no cover - interface
-        raise NotImplementedError
+    def get(self, key: str) -> bytes: ...
 
-    def exists(self, key: str) -> bool:  # pragma: no cover - interface
-        raise NotImplementedError
+    def exists(self, key: str) -> bool: ...
 
-    def list(self, prefix: str) -> List[str]:  # pragma: no cover - interface
-        raise NotImplementedError
+    def list(self, prefix: str) -> List[str]: ...
 
-    def delete(self, key: str) -> None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def delete(self, key: str) -> None: ...
 
 
-class LocalStorage(Storage):
+class LocalStorage:
     def __init__(self, root: str):
         self.root = os.path.abspath(root)
         os.makedirs(self.root, exist_ok=True)
@@ -62,8 +57,12 @@ class LocalStorage(Storage):
         return os.path.isfile(self._path(key))
 
     def list(self, prefix: str) -> List[str]:
+        # Walk only the directory the prefix points into, not the whole lake: keys are paths, so every
+        # match lives under the prefix's last "/". The cost then scales with the prefix, not the lake.
+        head = prefix.rsplit("/", 1)[0] if "/" in prefix else ""
+        base = self._path(head) if head else self.root
         out = []
-        for dirpath, _dirs, files in os.walk(self.root):
+        for dirpath, _dirs, files in os.walk(base):
             for name in files:
                 if name.endswith(".tmp"):
                     continue
@@ -79,7 +78,7 @@ class LocalStorage(Storage):
             pass
 
 
-class S3Storage(Storage):
+class S3Storage:
     def __init__(self, bucket: str, prefix: str = "", endpoint_url: Optional[str] = None, client: Any = None):
         if client is None:
             import boto3

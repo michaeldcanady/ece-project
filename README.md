@@ -1,127 +1,210 @@
 # Real-time Citi Bike availability with weather context
 
-Stream-Visualization pipeline (ECE 5874, Fall 2026): Python 3.9, Kafka, Airflow, Parquet lake (local volume or
-AWS S3), Qlik dashboard. Package manager: [uv](https://docs.astral.sh/uv/). Everything that runs is an Airflow DAG,
-both ingest into Kafka and processing out of it.
+Stream-Visualization pipeline for ECE 5874 (Fall 2026). Citi Bike station availability (GBFS 2.3) and Open-Meteo
+weather are polled into Kafka, processed in one-minute micro-batches into a Parquet lake (a local Docker volume or
+AWS S3), and served to a Qlik dashboard. Everything that runs is an **Airflow DAG**: ingest into Kafka and
+processing out of it.
+
+Stack: Python 3.9, Airflow 2.7.3, Kafka (Confluent 7.5), Parquet via pyarrow.
+
+**[mise](https://mise.jdx.dev/) is the interface to the project.** Every command you run is a mise task;
+`mise tasks` lists them. mise also provides Python and [uv](https://docs.astral.sh/uv/). uv is the package
+manager the tasks use underneath; you don't call it directly.
 
 ```mermaid
 flowchart LR
     GBFS["Citi Bike GBFS 2.3"] --> IS["citibike_ingest_status<br/>every minute"]
-    GBFS --> SI
+    GBFS --> SIP["citibike_station_info: poll<br/>hourly"]
     OM["Open-Meteo"] --> IW["citibike_ingest_weather<br/>every 15 min"]
     IS --> K[("Kafka")]
     IW --> K
-    SI --> K
+    SIP --> K
     K --> MB["citibike_micro_batch<br/>every minute"]
-    K --> SI["citibike_station_info<br/>hourly: poll, then rebuild dimension"]
+    K --> SID["citibike_station_info: rebuild dimension"]
     MB --> L[("Lake: raw, curated, gold")]
-    SI --> L
-    L --> CP["citibike_compaction<br/>hourly"]
-    L --> DQ["citibike_daily_quality<br/>daily"]
-    CP --> L
-    DQ --> L
+    SID --> L
+    L <--> CP["citibike_compaction<br/>hourly"]
+    L <--> DQ["citibike_daily_quality<br/>daily"]
     L -- "gold/serving/*.parquet" --> Q["Qlik"]
 ```
 
-## Run it
+## Quick start
 
-Open the folder in VS Code and choose **Reopen in Container**. The whole stack starts with the window and stops
-when it closes (`shutdownAction: stopCompose`); state lives in named volumes, so Kafka's log, Postgres, and the
-local lake survive stop/start and rebuilds.
+1. Open the folder in VS Code and choose **Reopen in Container**. The whole stack starts with the window and stops
+   when it closes. State lives in named volumes, so Kafka's log, Airflow's database and the local lake survive
+   stop/start and rebuilds.
+2. Wait for Airflow at http://localhost:8080 (admin / admin, dev only). Every DAG starts unpaused.
+3. On the first start, `citibike_setup` creates the Kafka topics. For a minute or two, ingest and micro-batch
+   runs can fail because the topics don't exist yet; they recover on their own.
+4. Check the pipeline from the dev shell:
+
+```bash
+mise run broker:check      # broker reachable and all five topics exist
+mise run status            # lake health: last batch age, stations, at-risk counts, latency (fails if stale)
+```
 
 | Service | What it does |
 |---|---|
-| `airflow` | Airflow 2.7.3 on Python 3.9 running every DAG, UI at http://localhost:8080 (admin / admin, dev only) |
-| `kafka`, `zookeeper` | the broker (topic auto-create is off; `citibike_setup` creates them) |
+| `airflow` | runs every DAG (LocalExecutor, standalone) |
+| `kafka`, `zookeeper` | the broker; topic auto-create is off, so topics come only from `citibike_setup` |
 | `postgres` | Airflow metadata |
 | `volume-init` | makes the lake and log volumes writable by the airflow user |
-| `app` | the dev shell (no pipeline code runs here) |
+| `app` | the dev shell (devcontainer Python image plus the mise feature); no pipeline code runs here |
 
-| DAG | Schedule | What it does |
+Closing VS Code or a sleeping laptop stops the pipeline. The missed polls show up as gaps in the daily quality
+report; Kafka keeps 21 days, so the micro-batch catches up on whatever was ingested.
+
+## DAGs
+
+| DAG | Schedule | What it does | Retries |
+|---|---|---|---|
+| `citibike_setup` | once | creates the Kafka topics; safe to re-trigger after a broker reset | 5 |
+| `citibike_ingest_status` | every minute | polls station_status, one Kafka message per station | none |
+| `citibike_ingest_weather` | every 15 min | polls Open-Meteo current conditions | 2 |
+| `citibike_station_info` | :05 hourly | polls station_information, then rebuilds the station dimension | 2 |
+| `citibike_micro_batch` | every minute | plan → process → metrics → finalize (see Design) | 2 |
+| `citibike_compaction` | :20 hourly | merges each completed hour's per-minute files into one | 1 |
+| `citibike_daily_quality` | 00:30 UTC | quality report for the previous UTC day | 1 |
+| `citibike_replay` | manual | replays a capture into Kafka | none |
+
+How ingest behaves:
+
+- Each run polls once. A failed poll is recorded in `pipeline.poll_log` and the task goes red.
+- `citibike_ingest_status` doesn't retry: the next run is a minute away, and a retry would poll twice.
+- The dimension rebuild runs even when the station_info poll fails, because the compacted topic still holds the last
+  good snapshot.
+- State that has to outlive a task run is kept in XCom: the discovered feed URLs, the last feed timestamp (so an
+  unchanged feed isn't republished) and the failure count.
+
+Trigger any DAG from the dev shell through the Airflow REST API:
+
+```bash
+mise run dag:trigger citibike_setup
+mise run dag:trigger citibike_replay '{"path": "/opt/airflow/data/capture", "speed": 60}'
+```
+
+## The lake
+
+The same layout is used locally (`/opt/airflow/data` in Airflow, mounted read-only at `/lake` in the dev shell) and
+on S3 (under `s3://$CB_S3_BUCKET/$CB_S3_PREFIX/`). Data files are partitioned by event hour: `dt=YYYY-MM-DD/hr=HH/`.
+
+| Path | Contents |
+|---|---|
+| `raw/{station_status,weather,poll_log}/` | records as received, with Kafka topic/partition/offset and the lossless payload |
+| `curated/station_status/`, `curated/weather/` | deduplicated, validated, flagged, joined with the station dimension and as-of weather |
+| `curated/dim_station/` | station dimension: `current.parquet` plus hourly snapshots |
+| `gold/station_window_15m/`, `gold/system_availability_5m/` | per-station window metrics, system-wide availability |
+| `gold/serving/` | **what Qlik reads**, overwritten every batch: `current_station_state`, `at_risk`, `system_summary`, `batch_log_recent` |
+| `dlq/` | invalid records with reason codes |
+| `quality/daily/dt=YYYY-MM-DD/` | `report.json` and `report.md` |
+| `ops/batch_plan/`, `ops/batch_log/` | per-run offset plans and the batch history |
+
+## Configuration
+
+All settings are `CB_*` environment variables with working defaults. To change them, copy
+`.devcontainer/.env.example` to `.devcontainer/.env` (gitignored) and rebuild the container.
+
+| Variable | Default | Purpose |
 |---|---|---|
-| `citibike_setup` | once | create the Kafka topics (idempotent; re-trigger after a broker reset) |
-| `citibike_ingest_status` | every minute | poll station_status, one message per station |
-| `citibike_ingest_weather` | every 15 min | poll Open-Meteo current conditions |
-| `citibike_station_info` | hourly | poll station_information, then rebuild the station dimension |
-| `citibike_micro_batch` | every minute | Kafka offsets → validated, enriched lake layers and serving files |
-| `citibike_compaction` | hourly | merge per-minute files of completed hours |
-| `citibike_daily_quality` | daily 00:30 UTC | quality report for the previous day |
-| `citibike_replay` | manual | replay a capture into Kafka |
+| `CB_STORAGE` | `local` | `local` or `s3`; S3 also needs `CB_S3_BUCKET`, `CB_S3_PREFIX` and AWS credentials |
+| `CB_CAPTURE_DIR` | unset | record everything the ingest DAGs publish (see Sample data) |
+| `CB_STALE_MINUTES` | 30 | a station whose `last_reported` is older than this is stale |
+| `CB_WINDOW_MINUTES` | 15 | trailing window for rate metrics |
+| `CB_RISK_HORIZON_MINUTES` | 30 | flag `at_risk` when empty or full is predicted within this many minutes |
+| `CB_NOISE_FLOOR_BIKES` | 2 | minimum net change before a station can be flagged |
+| `CB_STATUS_INTERVAL_S` | 60 | expected poll interval for completeness; must match the ingest schedule |
+| `CB_GAP_THRESHOLD_S` | 150 | a silence longer than this counts as a gap |
+| `CB_WEATHER_LAT`, `CB_WEATHER_LON` | Midtown Manhattan | weather location |
 
-Ingest polls do not retry inside a run: a failed poll is recorded in `pipeline.poll_log` and the task goes red.
-`station_status` runs every minute without retries (a retry would double-poll); weather and station_info retry twice.
-Producer state that must outlive a task (discovered feed URLs, last feed timestamp, failure count) is kept in XCom.
+The full list, with comments, is in `citibike_producer/config.py` and `citibike_pipeline/config.py`.
 
-```bash
-uv run citibike-status                 # lake health: last batch age, stations, at-risk counts, latency
-mise run broker:check                  # broker reachable and all topics exist
-mise run dag:trigger <dag_id> ['<conf>']  # trigger any DAG through the Airflow REST API
-uv run pytest                          # no broker or network needed (DAG tests skip without Airflow)
-mise run lint                          # ruff
-```
+## Sample data and replay
 
-The lake defaults to a docker volume (`/opt/airflow/data` in Airflow, `/lake` read-only in the dev shell).
-For AWS S3, copy `.devcontainer/.env.example` to `.devcontainer/.env` and rebuild.
-
-Gaps from closing VS Code or a sleeping laptop are expected: they appear in `pipeline.poll_log` and in the
-daily quality report as completeness below 100% and listed gaps.
-
-## Replay (no network needed)
+`data/sample/sample_capture.jsonl.gz` is **synthetic**: 40 stations over 45 minutes at one poll a minute. It
+includes a depleting, a filling, an empty, a stale, an offline, an invalid and an unknown station. It is built by
+the real producer jobs against simulated HTTP, so its envelopes match live data exactly. **Replace it with a real
+capture before submitting.**
 
 ```bash
-mise run kafka:replay                           # citibike_replay DAG: the committed sample at 60x
-mise run capture:synthetic                      # regenerate the synthetic sample (built by the real producer jobs)
+mise run kafka:replay         # replay the committed sample through Kafka at 60x (citibike_replay DAG)
+mise run capture:synthetic    # regenerate the synthetic sample
 ```
 
-To cut a **real** sample, set `CB_CAPTURE_DIR=/opt/airflow/data/capture` in `.devcontainer/.env` and rebuild. Each
-ingest DAG then appends what it publishes to its own `<job>.jsonl.gz` there (visible at `/lake/capture` in the dev
-shell). Replay the directory with `mise run dag:trigger citibike_replay '{"path": "/opt/airflow/data/capture"}'`;
-its files are merged in event-time order.
+To record a **real** capture:
 
-`data/sample/sample_capture.jsonl.gz` is **synthetic** (40 stations, 45 minutes at one poll a minute, with a depleting, a filling, an
-empty, a stale, an offline, an invalid, and an unknown station). Replace it with a real capture before submitting.
-Replay into a clean lake: serving time never moves backwards, so replaying older data over live data is ignored.
+1. Set `CB_CAPTURE_DIR=/opt/airflow/data/capture` in `.devcontainer/.env` and rebuild.
+2. Each ingest DAG appends what it publishes to its own `<job>.jsonl.gz` in that directory. You can see the files
+   at `/lake/capture` in the dev shell.
+3. Replay the directory with the `citibike_replay` DAG; its files are merged in event-time order.
+
+Replay into a clean lake. Serving time never moves backwards, so replaying older data over live data is ignored.
 
 ## Design
 
-- **Event envelope** on every message: schema version, `poll_id`, source URL, GBFS version, source timestamp
-  (`feed_last_updated`), ingest timestamp (`fetched_at`), producer version, payload. `pipeline.poll_log` records
-  every poll attempt (outcome, latency, delivery counts).
-- **Exactly the planned offsets, committed last.** `plan_batch` writes `ops/batch_plan/<run_id>.json` once. A retry
-  reuses it, so the same offsets are re-read and the same keys (derived from a hash of the ranges) are overwritten.
-  Kafka offsets are committed in `finalize`, after every output exists.
+- **Event envelope on every message:**
+  - schema version, `poll_id`, source URL, GBFS version
+  - source timestamp (`feed_last_updated`) and ingest timestamp (`fetched_at`)
+  - producer version and payload
+
+  `pipeline.poll_log` records every poll attempt: outcome, HTTP latency and delivery counts.
+- **Exactly the planned offsets, committed last.**
+  - `plan_batch` writes `ops/batch_plan/<run_id>.json` once.
+  - A retry reuses that plan, so it re-reads the same offsets and overwrites the same keys, which are derived from a
+    hash of the offset ranges.
+  - Kafka offsets are committed in `finalize`, after every output exists.
 - **Event time everywhere.** Windows and `as_of` come from observation times, never the wall clock, so replay
-  behaves like live. Latency is `serving write time - fetched_at` (or `replayed_at` in replay).
-- **Layers.** `raw/` typed as received with Kafka coordinates and the lossless payload; `curated/` deduplicated,
-  flagged (`is_stale`, `is_repeat`, `is_out_of_order`, `is_unknown_station`) and joined with the station
-  dimension and as-of weather; `gold/` window metrics, system availability, and `gold/serving/*` (overwritten
-  each batch, what Qlik reads). Invalid records go to `dlq/` with reason codes. Files are partitioned by the
-  event hour of their rows.
-- **Rate extrapolation, no ML.** Over a trailing 15-minute window: net change, rate per minute, minutes to empty or
-  full, `at_risk` when within 30 minutes and the change is at least 2 bikes (`CB_*` variables tune all of it).
+  behaves like live. Latency is the time the serving files were written minus `fetched_at` (or minus `replayed_at`
+  during replay).
+- **Rate extrapolation, no ML.** Over the trailing window the pipeline computes net change, rate per minute, and
+  minutes to empty or full. A station is `at_risk` when empty or full is within the risk horizon and the change is
+  at least the noise floor.
+- **Provenance.** Feed URLs come from the GBFS discovery file and are never hardcoded. Every row carries
+  `source_url`, `gbfs_version`, `poll_id`, `producer_version`, `batch_id` and its Kafka topic/partition/offset.
 
-Provenance: feed URLs come from the GBFS discovery file (`gbfs.citibikenyc.com/gbfs/2.3/gbfs.json`); every row
-carries `source_url`, `gbfs_version`, `poll_id`, `producer_version`, `batch_id`, and Kafka topic/partition/offset.
-
-## Layout
+## Project layout
 
 ```
 citibike_contract/   topic names, event types, envelope schema version, timestamp format (stdlib only)
 citibike_producer/   ingest library: polling jobs, Kafka sink, replay, synthetic capture, topic creation
-citibike_pipeline/   processing library (no Airflow imports): batch, metrics, validation, storage, quality
-dags/                eight thin DAGs that call the libraries; shared settings in dags/_common.py
-.devcontainer/       compose stack and the Airflow image
-tests/               unit, end-to-end (in-memory broker), DAG parsing
+citibike_pipeline/   processing library: micro-batch, metrics, validation, storage, compaction, quality
+dags/                thin DAGs that call the libraries; shared settings in dags/_common.py
+data/sample/         the committed (synthetic) sample capture
+.devcontainer/       compose stack, dev container definition, Airflow image
+tests/               unit tests, end-to-end over an in-memory broker, DAG parsing
 ```
 
-## Known limitations and assumptions to confirm
+The libraries import nothing from Airflow, so all the processing logic can be tested without a scheduler.
 
-- **Stale threshold (30 min) is an assumption.** Quiet stations may legitimately not report for long. Tune
-  `CB_STALE_MINUTES` from the age CDF in the daily report.
-- **Qlik refresh.** The one-minute dashboard refresh and two-minute latency target depend on how often the
-  course's Qlik can reload; unverified. The pipeline's own latency is measured in `batch_log`.
-- `current_station_state` contains stations seen in the last 30 minutes; a station that disappears from the feed
+## Development
+
+```bash
+mise run test       # all tests; no broker or network needed
+mise run lint       # ruff
+mise run sync       # install the locked dependencies (the dev container does this on create)
+mise run lock       # re-resolve uv.lock after changing dependencies in pyproject.toml
+mise tasks          # everything else: peeking at topics, triggering DAGs, regenerating the sample
+```
+
+When the dev container is created it runs `mise trust`, `mise install` (Python and uv, as pinned in
+`mise.toml`) and `mise run sync`.
+
+The DAG-parsing tests (`tests/test_dags.py`) skip unless Airflow is installed. Airflow isn't a project dependency
+because it has to be installed with its constraints file. To run them, install `apache-airflow==2.7.3` into a
+separate environment using Airflow's constraints for Python 3.9.
+
+## Known limitations and assumptions
+
+- **One poll a minute.** Airflow can't schedule more often, so station_status is polled every 60 s rather than the
+  30 s in the proposal.
+- **Stale threshold (30 min) is an assumption.** Quiet stations may legitimately not report for a long time. Tune
+  `CB_STALE_MINUTES` from the age distribution in the daily report.
+- **Qlik refresh is unverified.** The one-minute dashboard refresh and the two-minute latency target depend on how
+  often the course's Qlik can reload. The pipeline's own latency is measured in `batch_log`.
+- `current_station_state` contains stations seen in the last 30 minutes, so a station that disappears from the feed
   drops out of the serving file.
-- Window metrics use first and last observation; they are sensitive to single-bike noise (noise floor 2).
-- Compaction runs on hours ended at least 2 hours ago; daily compaction is not implemented.
-- Not covered by the tests: a real broker, the Docker images, Qlik.
+- Window metrics use the first and last observation, so they are sensitive to single-bike noise (hence the noise
+  floor).
+- Compaction only touches hours that ended at least 2 hours ago. It skips `dlq/`, `gold/` and `ops/`, and
+  `ops/batch_plan/` is never pruned (about 1,440 files a day).
+- Credentials (admin / admin, Postgres airflow / airflow, basic auth on the REST API) are for local development only.
+- The tests don't cover a real broker, the Docker images or Qlik.

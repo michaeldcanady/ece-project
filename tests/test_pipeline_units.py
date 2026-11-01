@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -129,6 +130,35 @@ def test_local_storage_roundtrip_and_safety(tmp_path):
         s.get("missing")
 
 
+LIST_KEYS = ["raw/a/1.p", "raw/ab/2.p", "raw/b.p", "rawx/3.p", "top.p"]
+LIST_PREFIXES = ["", "raw/", "raw/a", "raw/a/", "raw/ab/", "ra", "nope/", "raw/a/1.p"]
+
+
+def assert_list_is_plain_prefix_match(s):
+    """list(prefix) means every key starting with prefix, on every backend (S3 semantics)."""
+    for k in LIST_KEYS:
+        s.put(k, b"x")
+    for p in LIST_PREFIXES:
+        assert s.list(p) == sorted(k for k in LIST_KEYS if k.startswith(p)), p
+
+
+def test_local_storage_list_matches_s3_prefix_semantics(tmp_path):
+    assert_list_is_plain_prefix_match(LocalStorage(str(tmp_path)))
+
+
+def test_local_storage_list_does_not_walk_outside_the_prefix(tmp_path, monkeypatch):
+    s = LocalStorage(str(tmp_path))
+    s.put("curated/x/dt=2026-10-01/hr=00/a.parquet", b"x")
+    s.put("ops/batch_plan/r1.json", b"x")
+    walked = []
+    real_walk = os.walk
+    monkeypatch.setattr(os, "walk", lambda top: walked.append(top) or real_walk(top))
+    assert s.list("curated/x/dt=2026-10-01/hr=00/") == ["curated/x/dt=2026-10-01/hr=00/a.parquet"]
+    assert walked == [os.path.join(str(tmp_path), "curated", "x", "dt=2026-10-01", "hr=00")]
+    with pytest.raises(ValueError):
+        s.list("../outside/")
+
+
 def test_s3_storage_with_moto(monkeypatch):
     moto = pytest.importorskip("moto")
     boto3 = pytest.importorskip("boto3")
@@ -148,3 +178,4 @@ def test_s3_storage_with_moto(monkeypatch):
         assert s.list("raw/") == ["raw/y.bin"]
         with pytest.raises(FileNotFoundError):
             s.get("raw/x.bin")
+        assert_list_is_plain_prefix_match(S3Storage("lake", "other", client=client))

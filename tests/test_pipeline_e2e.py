@@ -217,6 +217,72 @@ def test_compaction_is_lossless_idempotent_and_verified(tmp_path, capture):
     assert t.num_rows == len(before)
 
 
+SORT = ["fetched_at", "kafka_partition", "kafka_offset"]
+HOUR = (lake.CURATED_STATUS, "2026-10-20", 12)
+
+
+class CompactsMidRead(LocalStorage):
+    """Compacts HOUR the first time a reader fetches one of its minute files, then serves the
+    (now deleted) file: the worst-case interleaving of load_window and compaction."""
+
+    def __init__(self, root):
+        super().__init__(root)
+        self.armed = False
+
+    def get(self, key):
+        if self.armed and key.startswith("%s/dt=%s/hr=%d/" % HOUR) and not key.endswith(lake.COMPACTED_NAME):
+            self.armed = False
+            compact_partition(self, *HOUR, SORT)
+        return super().get(key)
+
+
+def test_load_window_is_lossless_when_compaction_runs_mid_read(tmp_path, capture):
+    cfg, _storage, consumer, reader = make_env(tmp_path, capture)
+    storage = CompactsMidRead(str(tmp_path))
+    drain(reader, storage, cfg)
+    cols = lake.IDENTITY + ["fetched_at"]
+    expected = lake.load_window(storage, lake.CURATED_STATUS, START, START + timedelta(hours=1), cols)
+    storage.armed = True
+    got = lake.load_window(storage, lake.CURATED_STATUS, START, START + timedelta(hours=1), cols)
+    assert not storage.armed                                            # compaction really ran mid-read
+    assert storage.list("%s/dt=%s/hr=%d/" % HOUR) == ["%s/dt=%s/hr=%d/compacted.parquet" % HOUR]
+    assert sorted(got.to_pylist(), key=str) == sorted(expected.to_pylist(), key=str)
+
+
+def test_load_window_raises_when_a_file_keeps_vanishing(tmp_path):
+    class Ghost(LocalStorage):
+        def list(self, prefix):
+            return [prefix + "ghost.parquet"]
+
+    with pytest.raises(FileNotFoundError):
+        lake.load_window(Ghost(str(tmp_path)), lake.CURATED_STATUS, START, START + timedelta(minutes=5),
+                         lake.IDENTITY + ["fetched_at"])
+
+
+def test_read_batch_file_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    assert len(drain(reader, storage, cfg)) > 1                          # several batches share the hour
+    cols = ["kafka_partition", "kafka_offset", "fetched_at"]
+    before = {k: read_parquet(storage, k, columns=cols).to_pylist()
+              for k in storage.list("%s/dt=%s/hr=%d/" % HOUR)}
+    compact_partition(storage, *HOUR, SORT)
+    for key, rows in before.items():
+        batch_id = key.rsplit("/", 1)[1][:-len(".parquet")]
+        assert lake.read_batch_file(storage, key, batch_id, cols).to_pylist() == rows, key
+
+
+def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
+    publish = batch.compute_metrics(plan, stats, storage, cfg, now=START + timedelta(minutes=MINUTES))
+    direct = sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"])))
+    compact_due(storage, now=START + timedelta(hours=4))                # e.g. a replay into old hours
+    assert not any(storage.exists(k) for k in stats["status_keys"])
+    entry = batch.finalize_batch(plan, stats, publish, reader, storage, cfg, now=START + timedelta(minutes=MINUTES))
+    assert sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"]))) == direct
+    assert entry["latency_p50_s"] is not None
+
+
 def test_compact_due_respects_lag(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)

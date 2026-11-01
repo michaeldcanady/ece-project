@@ -428,7 +428,7 @@ def batch_latencies(storage: Storage, plan: Dict[str, Any], stats: Dict[str, Any
         return []
     out = []
     for key in stats.get("status_keys", []):
-        t = read_parquet(storage, key, columns=["fetched_at", "replayed_at"])
+        t = lake.read_batch_file(storage, key, plan["batch_id"], ["fetched_at", "replayed_at"])
         for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist()):
             out.append(max((published_at - (r or f)).total_seconds(), 0.0))
     return out
