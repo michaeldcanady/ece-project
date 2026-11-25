@@ -79,6 +79,11 @@ _Avoid_: request, scrape
 The envelope a job sends after each poll, recording its outcome whether it succeeded or not.
 _Avoid_: heartbeat, job log
 
+**Outcome**:
+How a poll ended, one of a fixed set the contract defines. Only an ok poll and a poll skipped because the feed
+was unchanged count as successes.
+_Avoid_: status, result
+
 **Replay**:
 Re-sending a captured envelope through Kafka later. A replayed envelope keeps its original fetch time
 and also records when it was replayed.

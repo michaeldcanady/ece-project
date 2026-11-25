@@ -51,15 +51,6 @@ def validate_weather_payload(p: Dict[str, Any]) -> List[str]:
     return errors
 
 
-def validate_poll_log_payload(p: Dict[str, Any]) -> List[str]:
-    errors: List[str] = []
-    if not isinstance(p.get("job"), str):
-        errors.append("bad_job")
-    if not isinstance(p.get("outcome"), str):
-        errors.append("bad_outcome")
-    return errors
-
-
 def validate_station_info_payload(p: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     if not isinstance(p.get("station_id"), str) or not p.get("station_id"):

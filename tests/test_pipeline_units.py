@@ -10,7 +10,6 @@ from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.metrics import Obs, station_state, window_metrics
 from citibike_pipeline.storage import LocalStorage, S3Storage
 from citibike_pipeline.validation import (
-    validate_poll_log_payload,
     validate_station_info_payload,
     validate_status_payload,
     validate_weather_payload,
@@ -70,7 +69,6 @@ def test_status_validation_accepts_good_and_small_clock_skew():
 def test_other_payload_validators():
     assert validate_weather_payload({"current": {"time": 1, "temperature_2m": 3.0}}) == []
     assert validate_weather_payload({}) == ["missing_current"]
-    assert validate_poll_log_payload({"job": "x", "outcome": "ok"}) == []
     assert "bad_coordinates" in validate_station_info_payload({"station_id": "a", "lat": "x", "lon": 1})
 
 

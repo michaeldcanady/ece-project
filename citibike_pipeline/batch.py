@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 import pyarrow as pa
 
-from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, decode
+from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, InvalidPollLog, PollLog, decode
 
 from . import lake, serving
 from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
@@ -43,7 +43,6 @@ from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import epoch, from_epoch, iso, parse_iso, utcnow
 from .validation import (
-    validate_poll_log_payload,
     validate_status_payload,
     validate_weather_payload,
 )
@@ -203,7 +202,11 @@ def parse_records(records: List[Record], batch_id: str, processed_at: datetime,
         elif et == "weather_current":
             reasons = validate_weather_payload(payload)
         else:
-            reasons = validate_poll_log_payload(payload)
+            try:
+                PollLog.from_payload(payload)
+                reasons = []
+            except InvalidPollLog as exc:
+                reasons = exc.reasons
         out.raw_rows.append({
             "kafka_topic": rec.topic, "kafka_partition": rec.partition, "kafka_offset": rec.offset,
             "kafka_timestamp": _ts(rec.timestamp_ms), "event_type": et, "poll_id": env.poll_id,

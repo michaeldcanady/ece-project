@@ -181,8 +181,9 @@ reason `bad_replayed_at` instead of failing the batch.
 
 ## Out of Scope
 
-- **Payload validation** (station status, weather, poll log and station information rules) stays in the
-  pipeline as it is.
+- **Payload validation** (station status, weather and station information rules) stays in the pipeline as it
+  is. The poll log is the exception: `PollLog.from_payload` in the contract validates it (see the poll log
+  payload in `citibike_contract/poll_log.py`).
 - **The wire format.** No new fields, no renamed fields, no schema version change.
 - **The lake.** No column, schema or layout changes in raw, curated or gold data.
 - **Typed payloads.** The payload stays a plain dictionary. Typing each event type's payload is a possible

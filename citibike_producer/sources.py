@@ -9,22 +9,23 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from citibike_contract import utc_now_iso
+from citibike_contract import (
+    OUTCOME_CONNECTION,
+    OUTCOME_HTTP,
+    OUTCOME_OK,
+    OUTCOME_PARSE,
+    OUTCOME_TIMEOUT,
+    Outcome,
+    utc_now_iso,
+)
 
 from .config import Config
 
 log = logging.getLogger(__name__)
 
-OUTCOME_OK = "ok"
-OUTCOME_TIMEOUT = "timeout"
-OUTCOME_CONNECTION = "connection_error"
-OUTCOME_HTTP = "http_error"
-OUTCOME_PARSE = "parse_error"
-
-
 @dataclass
 class FetchResult:
-    outcome: str
+    outcome: Outcome
     url: str
     started_at: str
     fetched_at: Optional[str] = None

@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Mapping, Optional
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from citibike_contract import InvalidPollLog, PollLog
+
 from . import lake
 from .batch_log import BatchLog
 from .config import PipelineConfig
@@ -34,14 +36,18 @@ def _poll_log_section(storage: Storage, cfg: PipelineConfig, start: datetime, en
     t = lake.RAW_POLL_LOG.read_window(storage, start, end, ["fetched_at", "payload_json"])
     by_job: Dict[str, List[Dict[str, Any]]] = {}
     for fetched, payload in zip(t["fetched_at"].to_pylist(), t["payload_json"].to_pylist()):
-        p = json.loads(payload)
-        by_job.setdefault(p.get("job", "?"), []).append({"t": epoch(fetched), "p": p})
+        try:
+            p = PollLog.from_payload(json.loads(payload))
+        except (InvalidPollLog, ValueError) as exc:
+            log.warning("skipping an undecodable poll log at %s: %s", iso(fetched), exc)
+            continue
+        by_job.setdefault(p.job, []).append({"t": epoch(fetched), "p": p})
 
     out: Dict[str, Any] = {}
     for job, items in sorted(by_job.items()):
         items.sort(key=lambda x: x["t"])
-        outcomes = Counter(i["p"].get("outcome") for i in items)
-        lat = sorted(i["p"]["http_latency_ms"] for i in items if i["p"].get("http_latency_ms") is not None)
+        outcomes = Counter(i["p"].outcome for i in items)
+        lat = sorted(i["p"].http_latency_ms for i in items if i["p"].http_latency_ms is not None)
         section: Dict[str, Any] = {
             "polls_logged": len(items), "outcomes": dict(outcomes),
             "http_latency_ms_p50": pct(lat, 0.5), "http_latency_ms_p95": pct(lat, 0.95),

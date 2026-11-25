@@ -13,8 +13,17 @@ import uuid
 from typing import Any, Dict, Optional
 
 from citibike_contract import (
+    OUTCOME_DISCOVERY,
+    OUTCOME_HTTP,
+    OUTCOME_KAFKA,
+    OUTCOME_OK,
+    OUTCOME_PARSE,
+    OUTCOME_SKIPPED,
     Envelope,
     MissingKafkaKey,
+    Outcome,
+    PollLog,
+    is_success,
     iso_to_epoch_ms,
     kafka_key,
     parse_iso,
@@ -25,8 +34,6 @@ from citibike_contract import (
 from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
 from .sink import DeliveryBatch, KafkaSink
 from .sources import (
-    OUTCOME_HTTP,
-    OUTCOME_PARSE,
     FeedRegistry,
     FetchResult,
     HttpClient,
@@ -37,13 +44,6 @@ log = logging.getLogger(__name__)
 
 SOURCE_GBFS = "citibike_gbfs"
 SOURCE_WEATHER = "open_meteo"
-
-OUTCOME_OK = "ok"
-OUTCOME_SKIPPED = "skipped_unchanged"
-OUTCOME_KAFKA = "kafka_error"
-OUTCOME_DISCOVERY = "discovery_error"
-_SUCCESS = (OUTCOME_OK, OUTCOME_SKIPPED)
-
 
 class Job:
     name = "job"
@@ -67,35 +67,28 @@ class Job:
     def run_once(self) -> bool:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def _finish(self, poll_id: str, source: str, url: Optional[str], res: Optional[FetchResult], outcome: str,
+    def _finish(self, poll_id: str, source: str, url: Optional[str], res: Optional[FetchResult], outcome: Outcome,
                 gbfs_version: Optional[str] = None, feed_last_updated: Optional[int] = None,
                 feed_ttl: Optional[int] = None, n_records: Optional[int] = None,
                 batch: Optional[DeliveryBatch] = None, error: Optional[str] = None,
                 messages_skipped: int = 0) -> bool:
-        ok = outcome in _SUCCESS
+        ok = is_success(outcome)
         self.consecutive_failures = 0 if ok else self.consecutive_failures + 1
         self.last_outcome, self.last_error = outcome, error
-        payload: Dict[str, Any] = {
-            "job": self.name,
-            "outcome": outcome,
-            "error": error,
-            "started_at": res.started_at if res else utc_now_iso(),
-            "fetched_at": res.fetched_at if res else None,
-            "http_status": res.http_status if res else None,
-            "http_latency_ms": res.latency_ms if res else None,
-            "feed_last_updated": feed_last_updated,
-            "feed_ttl": feed_ttl,
-            "n_records": n_records,
-            "messages_sent": batch.sent if batch else 0,
-            "messages_delivered": batch.delivered if batch else 0,
-            "messages_failed": batch.failed if batch else 0,
-            "messages_skipped": messages_skipped,   # envelopes with no Kafka key, logged and not sent
-            "consecutive_failures": self.consecutive_failures,
-        }
+        poll_log = PollLog(
+            job=self.name, outcome=outcome, error=error,
+            started_at=res.started_at if res else utc_now_iso(),
+            fetched_at=res.fetched_at if res else None,
+            http_status=res.http_status if res else None,
+            http_latency_ms=res.latency_ms if res else None,
+            feed_last_updated=feed_last_updated, feed_ttl=feed_ttl, n_records=n_records,
+            messages_sent=batch.sent if batch else 0, messages_delivered=batch.delivered if batch else 0,
+            messages_failed=batch.failed if batch else 0, messages_skipped=messages_skipped,
+            consecutive_failures=self.consecutive_failures)
         env = Envelope(event_type="poll_log", poll_id=poll_id, source=source, source_url=url or "",
                        gbfs_version=gbfs_version, feed_last_updated=feed_last_updated,
                        fetched_at=parse_iso(res.fetched_at) if res and res.fetched_at else utcnow(),
-                       producer_version=self.cfg.producer_version, payload=payload)
+                       producer_version=self.cfg.producer_version, payload=dict(poll_log.to_payload()))
         self.sink.send(TOPIC_POLL_LOG, kafka_key(env), env)
         level = logging.INFO if ok else logging.WARNING
         log.log(level, "%s outcome=%s records=%s latency_ms=%s failures=%d err=%s", self.name, outcome,
