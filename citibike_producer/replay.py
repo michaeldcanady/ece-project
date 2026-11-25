@@ -4,14 +4,15 @@ from __future__ import annotations
 import glob
 import gzip
 import heapq
-import json
 import logging
 import os
 import threading
-from typing import Any, Dict, Iterator, List, Optional, TextIO, Tuple
+from typing import Iterator, List, Optional, TextIO, Tuple
 
-from .config import TOPIC_BY_EVENT_TYPE, Config
-from .envelope import iso_to_epoch_ms, utc_now_iso
+from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, decode, utcnow
+from citibike_contract.envelope import InvalidEnvelope, kafka_key
+
+from .config import Config
 from .sink import KafkaSink
 
 log = logging.getLogger(__name__)
@@ -23,35 +24,19 @@ def _open(path: str) -> TextIO:
     return open(path, encoding="utf-8")
 
 
-def _key_for(env: Dict[str, Any], cfg: Config) -> str:
-    et = env.get("event_type")
-    payload = env.get("payload") or {}
-    if et in ("station_status", "station_information"):
-        sid = payload.get("station_id")
-        return str(sid) if sid is not None else "_missing_station_id"
-    if et == "weather_current":
-        return str(payload.get("location_id") or cfg.weather_location_id)
-    if et == "poll_log":
-        return str(payload.get("job") or "poll_log")
-    return "unknown"
-
-
-def _envelopes(path: str) -> Iterator[Tuple[float, Dict[str, Any]]]:
-    """(event time, envelope) for every readable line of one capture file, in file order."""
+def _envelopes(path: str) -> Iterator[Tuple[float, Envelope]]:
+    """(event time, envelope) for every valid envelope line of one capture file, in file order."""
     with _open(path) as fh:
-        for line in fh:
+        for lineno, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
                 continue
             try:
-                env = json.loads(line)
-                if env["event_type"] not in TOPIC_BY_EVENT_TYPE:
-                    raise KeyError(env["event_type"])
-                t = iso_to_epoch_ms(env["fetched_at"]) / 1000.0
-            except (ValueError, KeyError, TypeError):
-                log.warning("replay: skipping unreadable line in %s", path)
+                env = decode(line.encode("utf-8"))
+            except InvalidEnvelope as exc:
+                log.warning("replay: skipping line %d of %s: %s", lineno, path, exc)
                 continue
-            yield t, env
+            yield env.fetched_at.timestamp(), env
 
 
 def capture_files(path: str) -> List[str]:
@@ -87,9 +72,8 @@ def replay(path: str, sink: KafkaSink, cfg: Config, stop: threading.Event, speed
             if speed > 0 and prev_t is not None and t > prev_t:
                 stop.wait(min((t - prev_t) / speed, max_gap_s))
             prev_t = t
-            env["replay"] = True
-            env["replayed_at"] = utc_now_iso()
-            sink.send(TOPIC_BY_EVENT_TYPE[env["event_type"]], _key_for(env, cfg), env)
+            replayed = env.mark_replayed(utcnow())
+            sink.send(TOPIC_BY_EVENT_TYPE[replayed.event_type], kafka_key(replayed), replayed)
             sent += 1
             if sent % 1000 == 0:
                 sink.poll(0)

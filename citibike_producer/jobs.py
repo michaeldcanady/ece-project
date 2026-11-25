@@ -12,8 +12,10 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
+from citibike_contract import Envelope, iso_to_epoch_ms, parse_iso, utc_now_iso
+from citibike_contract.envelope import kafka_key
+
 from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
-from .envelope import iso_to_epoch_ms, make_envelope, utc_now_iso
 from .sink import DeliveryBatch, KafkaSink
 from .sources import (
     OUTCOME_HTTP,
@@ -81,10 +83,11 @@ class Job:
             "messages_failed": batch.failed if batch else 0,
             "consecutive_failures": self.consecutive_failures,
         }
-        env = make_envelope("poll_log", source, url or "", gbfs_version, feed_last_updated, poll_id,
-                            (res.fetched_at if res and res.fetched_at else utc_now_iso()), payload,
-                            self.cfg.producer_version)
-        self.sink.send(TOPIC_POLL_LOG, self.name, env)
+        env = Envelope(event_type="poll_log", poll_id=poll_id, source=source, source_url=url or "",
+                       gbfs_version=gbfs_version, feed_last_updated=feed_last_updated,
+                       fetched_at=parse_iso(res.fetched_at if res and res.fetched_at else utc_now_iso()),
+                       producer_version=self.cfg.producer_version, payload=payload)
+        self.sink.send(TOPIC_POLL_LOG, kafka_key(env), env)
         level = logging.INFO if ok else logging.WARNING
         log.log(level, "%s outcome=%s records=%s latency_ms=%s failures=%d err=%s", self.name, outcome,
                 n_records, res.latency_ms if res else None, self.consecutive_failures, error)
@@ -131,12 +134,12 @@ class GbfsStationJob(Job):
 
         batch = DeliveryBatch()
         ts = iso_to_epoch_ms(res.fetched_at)
+        fetched_at = parse_iso(res.fetched_at)
         for st in stations:
-            sid = st.get("station_id") if isinstance(st, dict) else None
-            key = str(sid) if sid is not None else "_missing_station_id"   # surfaces in downstream DLQ
-            env = make_envelope(self.event_type, SOURCE_GBFS, url, version, last_updated, poll_id,
-                                res.fetched_at, st, self.cfg.producer_version)
-            self.sink.send(self.topic, key, env, batch, ts)
+            env = Envelope(event_type=self.event_type, poll_id=poll_id, source=SOURCE_GBFS, source_url=url,
+                           gbfs_version=version, feed_last_updated=last_updated, fetched_at=fetched_at,
+                           producer_version=self.cfg.producer_version, payload=st)
+            self.sink.send(self.topic, kafka_key(env), env, batch, ts)
         remaining = self.sink.flush(15.0)
         if batch.failed == 0 and remaining == 0:
             self._last_feed_updated = last_updated
@@ -176,10 +179,11 @@ class WeatherJob(Job):
             "current": current,
             "current_units": body.get("current_units"),
         }
-        env = make_envelope("weather_current", SOURCE_WEATHER, res.url, None, obs_time, poll_id,
-                            res.fetched_at, payload, self.cfg.producer_version)
+        env = Envelope(event_type="weather_current", poll_id=poll_id, source=SOURCE_WEATHER, source_url=res.url,
+                       gbfs_version=None, feed_last_updated=obs_time, fetched_at=parse_iso(res.fetched_at),
+                       producer_version=self.cfg.producer_version, payload=payload)
         batch = DeliveryBatch()
-        self.sink.send(TOPIC_WEATHER, self.cfg.weather_location_id, env, batch, iso_to_epoch_ms(res.fetched_at))
+        self.sink.send(TOPIC_WEATHER, kafka_key(env), env, batch, iso_to_epoch_ms(res.fetched_at))
         remaining = self.sink.flush(15.0)
         if batch.failed == 0 and remaining == 0:
             self._last_feed_updated = obs_time

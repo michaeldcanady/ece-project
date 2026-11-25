@@ -1,10 +1,10 @@
 """Minimal stand-ins for confluent_kafka objects used by KafkaBatchReader."""
 import gzip
-import json
 import zlib
 from types import SimpleNamespace
 
-from citibike_contract import TOPIC_BY_EVENT_TYPE, TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER
+from citibike_contract import TOPIC_BY_EVENT_TYPE, TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, decode
+from citibike_contract.envelope import kafka_key
 
 
 class FakeMessage:
@@ -73,15 +73,12 @@ class FakeConsumer:
 
 def load_capture(path, partitions=3):
     """Spread a producer capture over a FakeConsumer the way the real topics are keyed."""
-    from citibike_producer.config import Config
-    from citibike_producer.replay import _key_for
     fc = FakeConsumer(partitions={TOPIC_STATUS: partitions, TOPIC_WEATHER: 1, TOPIC_POLL_LOG: 1, TOPIC_INFO: 1})
-    cfg = Config()
     with gzip.open(path, "rt") as fh:
         for line in fh:
-            env = json.loads(line)
-            topic = TOPIC_BY_EVENT_TYPE[env["event_type"]]
-            key = _key_for(env, cfg)
+            env = decode(line.strip().encode())
+            topic = TOPIC_BY_EVENT_TYPE[env.event_type]
+            key = kafka_key(env)
             part = zlib.crc32(key.encode()) % partitions if topic == TOPIC_STATUS else 0
             fc.append(topic, part, key, line.strip().encode(), ts=0)
     return fc

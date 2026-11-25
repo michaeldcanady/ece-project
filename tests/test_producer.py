@@ -1,8 +1,11 @@
 import gzip
 import json
+import logging
 import threading
 
-from citibike_producer.config import TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
+from citibike_contract import Envelope, parse_iso
+from citibike_contract.envelope import encode
+from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
 from citibike_producer.jobs import GbfsStationJob, WeatherJob
 from citibike_producer.replay import replay
 from citibike_producer.sink import KafkaSink
@@ -15,11 +18,13 @@ class FakeProducer:
 
     def __init__(self, fail=False):
         self.sent = []
+        self.raw = []   # value bytes, in send order
         self._cbs = []
         self.fail = fail
 
     def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=None):
         self.sent.append((topic, key.decode(), json.loads(value), timestamp))
+        self.raw.append(value)
         if on_delivery:
             self._cbs.append(on_delivery)
 
@@ -73,6 +78,21 @@ def make_job(client, producer, cfg=None):
     return job
 
 
+def envelope(event_type, payload, poll_id="p0", fetched_at="2026-10-20T14:00:00.000+00:00"):
+    """A captured envelope as the contract builds it; fields the capture tests do not care about are None."""
+    return Envelope(event_type=event_type, poll_id=poll_id, source=None, source_url=None, gbfs_version=None,
+                    feed_last_updated=None, fetched_at=parse_iso(fetched_at), producer_version=None,
+                    payload=payload)
+
+
+def write_capture(path, envelopes, extra_lines=()):
+    with gzip.open(path, "wt") as fh:
+        for e in envelopes:
+            fh.write(encode(e).decode("utf-8") + "\n")
+        for line in extra_lines:
+            fh.write(line + "\n")
+
+
 def by_topic(producer, topic):
     return [m for m in producer.sent if m[0] == topic]
 
@@ -89,6 +109,44 @@ def test_status_poll_publishes_one_message_per_station_and_poll_log():
     assert len({m[2]["poll_id"] for m in msgs}) == 1
     log = by_topic(prod, TOPIC_POLL_LOG)[0][2]["payload"]
     assert log["outcome"] == "ok" and log["messages_delivered"] == 3 and log["n_records"] == 3
+
+
+def test_status_poll_writes_the_wire_bytes_unchanged():
+    prod = FakeProducer()
+    job = make_job(FakeClient([ok_result(STATUS_BODY)]), prod)
+    job.run_once()
+    poll_id = prod.sent[0][2]["poll_id"]
+    assert prod.raw[0] == (
+        '{"schema_version":1,"event_type":"station_status","poll_id":"%s","source":"citibike_gbfs",'
+        '"source_url":"https://example.test/station_status.json","gbfs_version":"2.3",'
+        '"feed_last_updated":1760000100,"fetched_at":"2026-10-20T14:00:00.500+00:00","producer_version":"dev",'
+        '"payload":{"station_id":"1","num_bikes_available":3,"num_docks_available":10,"is_installed":1,'
+        '"is_renting":1,"is_returning":1,"last_reported":1760000000}}' % poll_id).encode()
+
+
+def test_replay_sends_each_envelope_under_the_key_the_live_job_used(tmp_path):
+    cfg = Config(tee_path=str(tmp_path / "tee.jsonl.gz"))
+    live = FakeProducer()
+    sink = KafkaSink(cfg, producer=live)
+    info = GbfsStationJob(cfg, sink, FakeClient([ok_result(STATUS_BODY)]), FakeRegistry(),
+                          "station_information", "station_information", TOPIC_INFO)
+    info.run_once()
+    weather_body = {"current": {"time": 1760000000, "interval": 900}}
+    WeatherJob(cfg, sink, FakeClient([ok_result(weather_body)])).run_once()
+    sink.close()
+    replayed = FakeProducer()
+    replay(cfg.tee_path, KafkaSink(Config(), producer=replayed), Config(), threading.Event(), speed=0)
+    assert [(m[0], m[1]) for m in replayed.sent] == [(m[0], m[1]) for m in live.sent]
+    assert [m[1] for m in live.sent] == ["1", "2", "3", "station_information", cfg.weather_location_id,
+                                         "weather"]
+
+
+def test_replay_keys_a_weather_envelope_without_a_location_id_as_missing(tmp_path):
+    path = tmp_path / "sample.jsonl.gz"
+    write_capture(path, [envelope("weather_current", {"current": {"time": 1}})])
+    prod = FakeProducer()
+    replay(str(path), KafkaSink(Config(), producer=prod), Config(), threading.Event(), speed=0)
+    assert prod.sent[0][:2] == (TOPIC_WEATHER, "_missing_location_id")
 
 
 def test_unchanged_feed_is_skipped_but_logged():
@@ -197,11 +255,8 @@ def test_poll_once_captures_one_file_per_job(tmp_path):
 
 def test_replay_merges_a_capture_directory_in_event_time_order(tmp_path):
     def write(name, times):
-        with gzip.open(tmp_path / name, "wt") as fh:
-            for t in times:
-                fh.write(json.dumps({"schema_version": 1, "event_type": "poll_log", "poll_id": t,
-                                     "fetched_at": "2026-10-20T14:00:%s.000+00:00" % t,
-                                     "payload": {"job": name}}) + "\n")
+        write_capture(tmp_path / name, [envelope("poll_log", {"job": name}, t, "2026-10-20T14:00:%s.000+00:00" % t)
+                                        for t in times])
     write("a.jsonl.gz", ["01", "04"])
     write("b.jsonl.gz", ["02", "03"])
     prod = FakeProducer()
@@ -235,17 +290,12 @@ def test_ensure_topics_is_idempotent_and_raises_on_real_errors():
 
 
 def test_replay_preserves_event_time_and_marks_replay(tmp_path):
-    envs = []
-    for i, fa in enumerate(["2026-10-20T14:00:00.000+00:00", "2026-10-20T14:00:30.000+00:00"]):
-        envs.append({"schema_version": 1, "event_type": "station_status", "poll_id": "p%d" % i,
-                     "fetched_at": fa, "payload": station(7)})
-    envs.append({"schema_version": 1, "event_type": "poll_log", "poll_id": "p1",
-                 "fetched_at": "2026-10-20T14:00:31.000+00:00", "payload": {"job": "station_status"}})
     path = tmp_path / "sample.jsonl.gz"
-    with gzip.open(path, "wt") as fh:
-        for e in envs:
-            fh.write(json.dumps(e) + "\n")
-        fh.write("not json\n")
+    write_capture(path, [
+        envelope("station_status", station(7), "p0", "2026-10-20T14:00:00.000+00:00"),
+        envelope("station_status", station(7), "p1", "2026-10-20T14:00:30.000+00:00"),
+        envelope("poll_log", {"job": "station_status"}, "p1", "2026-10-20T14:00:31.000+00:00"),
+    ], extra_lines=["not json"])
     prod = FakeProducer()
     cfg = Config()
     n = replay(str(path), KafkaSink(cfg, producer=prod), cfg, threading.Event(), speed=0)
@@ -253,8 +303,26 @@ def test_replay_preserves_event_time_and_marks_replay(tmp_path):
     topics = [m[0] for m in prod.sent]
     assert topics == [TOPIC_STATUS, TOPIC_STATUS, TOPIC_POLL_LOG]
     sent = prod.sent[0][2]
-    assert sent["fetched_at"] == envs[0]["fetched_at"] and sent["replay"] is True and "replayed_at" in sent
+    assert sent["fetched_at"] == "2026-10-20T14:00:00.000+00:00" and sent["replay"] is True
+    assert parse_iso(sent["replayed_at"]) > parse_iso(sent["fetched_at"])
     assert prod.sent[0][3] is None   # broker timestamp, not original CreateTime
+
+
+def test_replay_skips_lines_that_are_not_envelopes_and_logs_their_reasons(tmp_path, caplog):
+    path = tmp_path / "sample.jsonl.gz"
+    write_capture(path, [envelope("poll_log", {"job": "station_status"}, poll_id="p1")], extra_lines=[
+        '{"schema_version":1,"event_type":"poll_log","fetched_at":"nope","payload":{}}',
+        '{"schema_version":1,"event_type":"poll_log","poll_id":"p2",'
+        '"fetched_at":"2026-10-20T14:00:01.000+00:00","payload":{"job":"x"},"replayed_at":"bad"}',
+    ])
+    prod = FakeProducer()
+    cfg = Config()
+    with caplog.at_level(logging.WARNING, logger="citibike_producer.replay"):
+        n = replay(str(path), KafkaSink(cfg, producer=prod), cfg, threading.Event(), speed=0)
+    assert n == 1 and [m[2]["poll_id"] for m in prod.sent] == ["p1"]
+    warnings = [r.getMessage() for r in caplog.records]
+    assert any("missing_poll_id,bad_fetched_at" in w for w in warnings)
+    assert any("bad_replayed_at" in w for w in warnings)
 
 
 def test_tee_writes_gzip_jsonl(tmp_path):

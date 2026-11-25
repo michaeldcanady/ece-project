@@ -9,8 +9,9 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from citibike_contract import utc_now_iso
+
 from .config import Config
-from .envelope import utc_now_iso
 
 log = logging.getLogger(__name__)
 

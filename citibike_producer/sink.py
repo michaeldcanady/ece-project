@@ -6,8 +6,10 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
+from citibike_contract import Envelope
+from citibike_contract.envelope import encode
+
 from .config import Config
-from .envelope import encode
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +55,7 @@ class KafkaSink:
         self._tee_lock = threading.Lock()
         self._tee = gzip.open(cfg.tee_path, "at", encoding="utf-8") if cfg.tee_path else None
 
-    def send(self, topic: str, key: str, envelope: Dict[str, Any], batch: Optional[DeliveryBatch] = None,
+    def send(self, topic: str, key: str, envelope: Envelope, batch: Optional[DeliveryBatch] = None,
              timestamp_ms: Optional[int] = None) -> None:
         value = encode(envelope)
         kwargs: Dict[str, Any] = {"key": key.encode("utf-8"), "value": value}
