@@ -1,11 +1,13 @@
 """End to end over an in-memory broker: synthetic capture -> plan/process/metrics/finalize -> lake."""
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fakes import load_capture
 
-from citibike_contract import parse_iso
+from citibike_contract import TOPIC_STATUS, Envelope, parse_iso
+from citibike_contract.envelope import encode
 from citibike_pipeline import batch, lake
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import KafkaBatchReader
@@ -164,6 +166,32 @@ def test_validation_flags_land_in_dlq_not_curated(tmp_path, capture):
     rows = curated_rows(storage)
     assert "st-005" not in {r["station_id"] for r in rows}
     assert all(r["num_bikes_available"] >= 0 for r in rows)
+
+
+def _replayed_status(station_id, replayed_at):
+    """Wire bytes of a replayed status envelope whose replay time is the raw value `replayed_at`."""
+    fetched = START + timedelta(minutes=MINUTES - 1)
+    env = Envelope(event_type="station_status", poll_id="replay-" + station_id, source="test", source_url=None,
+                   gbfs_version=None, feed_last_updated=None, fetched_at=fetched, producer_version=None,
+                   payload={"station_id": station_id, "num_bikes_available": 1, "num_docks_available": 1,
+                            "last_reported": int(fetched.timestamp()) - 30})
+    wire = json.loads(encode(env.mark_replayed(START + timedelta(hours=2))))
+    wire["replayed_at"] = replayed_at
+    return json.dumps(wire).encode()
+
+
+def test_a_malformed_replay_time_lands_in_dlq_and_the_batch_commits(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    consumer.append(TOPIC_STATUS, 0, "st-bad", _replayed_status("st-bad", "not a time"))
+    consumer.append(TOPIC_STATUS, 0, "st-good", _replayed_status("st-good", "2026-10-20T14:00:00.000+00:00"))
+    drain(reader, storage, cfg)
+    assert consumer.commits[(TOPIC_STATUS, 0)] == len(consumer.log[(TOPIC_STATUS, 0)])
+    dlq = [r for k in storage.list("dlq/") for r in read_parquet(storage, k).to_pylist()]
+    assert [r["reason"] for r in dlq if "st-bad" in r["raw_value"]] == ["bad_replayed_at"]
+    rows = {r["station_id"]: r for r in curated_rows(storage)}
+    assert "st-bad" not in rows
+    assert rows["st-good"]["replay"] is True
+    assert rows["st-good"]["replayed_at"] == datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc)
 
 
 def test_curated_flags_and_provenance(tmp_path, capture):

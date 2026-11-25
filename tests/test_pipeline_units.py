@@ -1,13 +1,16 @@
-import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 
+from citibike_contract import TOPIC_STATUS, Envelope
+from citibike_contract.envelope import encode
+from citibike_pipeline.batch import parse_records
 from citibike_pipeline.config import PipelineConfig
+from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.metrics import Obs, station_state, window_metrics
 from citibike_pipeline.storage import LocalStorage, S3Storage
 from citibike_pipeline.validation import (
-    parse_envelope,
     validate_poll_log_payload,
     validate_station_info_payload,
     validate_status_payload,
@@ -19,21 +22,25 @@ NOW = 1_760_000_000.0
 
 
 def env(**over):
-    base = {"schema_version": 1, "event_type": "station_status", "poll_id": "p1",
-            "fetched_at": "2026-10-20T14:00:00.000+00:00", "payload": {"station_id": "1"}}
-    base.update(over)
-    return json.dumps(base).encode()
+    """Wire bytes of a valid status envelope, built with the contract; keyword arguments override fields."""
+    fields = dict(event_type="station_status", poll_id="p1", source="citibike", source_url="https://gbfs.example",
+                  gbfs_version="2.3", feed_last_updated=1_760_968_790,
+                  fetched_at=datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc), producer_version="0.1",
+                  payload=good_status(last_reported=1_760_968_740))
+    fields.update(over)
+    return encode(Envelope(**fields))
 
 
-def test_parse_envelope_accepts_and_rejects():
-    e, errs = parse_envelope(env())
-    assert errs == [] and e["poll_id"] == "p1"
-    assert parse_envelope(b"not json")[1] == ["invalid_json"]
-    assert parse_envelope(b"[1]")[1] == ["not_object"]
-    assert parse_envelope(b"")[1] == ["empty_value"]
-    _, errs = parse_envelope(env(schema_version=2, event_type="x", payload=[], poll_id="", fetched_at="nope"))
-    assert set(errs) == {"bad_schema_version", "unknown_event_type", "missing_payload", "missing_poll_id",
-                         "bad_fetched_at"}
+def test_parse_records_copies_envelope_provenance_into_the_raw_row():
+    rec = Record(topic=TOPIC_STATUS, partition=0, offset=7, timestamp_ms=None, key="a", value=env())
+    parsed = parse_records([rec], "b1", datetime(2026, 10, 20, 14, 1, tzinfo=timezone.utc), CFG)
+    assert parsed.dlq_rows == []
+    raw = parsed.raw_rows[0]
+    assert {k: raw[k] for k in ("poll_id", "source", "source_url", "gbfs_version", "feed_last_updated",
+                                "fetched_at", "producer_version", "replay", "replayed_at")} == {
+        "poll_id": "p1", "source": "citibike", "source_url": "https://gbfs.example", "gbfs_version": "2.3",
+        "feed_last_updated": 1_760_968_790, "fetched_at": datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc),
+        "producer_version": "0.1", "replay": False, "replayed_at": None}
 
 
 def good_status(**over):
