@@ -1,0 +1,89 @@
+{
+ "batches": {
+  "batches": 2,
+  "dlq_rows": 40,
+  "duplicates_dropped": 0,
+  "latency_s": {
+   "max": 2405.0,
+   "median_of_batch_p50": 126.0,
+   "p95_of_batch_p95": 2345.0
+  },
+  "records_read": 1687,
+  "replay_rows": 0
+ },
+ "day_utc": "2026-10-20",
+ "dlq": {
+  "by_reason": {
+   "bad_num_bikes_available": 40
+  },
+  "total": 40
+ },
+ "polls": {
+  "station_information": {
+   "http_latency_ms_p50": 180,
+   "http_latency_ms_p95": 180,
+   "outcomes": {
+    "ok": 1
+   },
+   "polls_logged": 1
+  },
+  "station_status": {
+   "completeness": 0.0278,
+   "expected_polls": 1440,
+   "gap_seconds_total": 0,
+   "gaps_over_threshold": 0,
+   "http_latency_ms_p50": 180,
+   "http_latency_ms_p95": 180,
+   "largest_gaps": [],
+   "outcomes": {
+    "ok": 40
+   },
+   "polls_logged": 40
+  },
+  "weather": {
+   "http_latency_ms_p50": 180,
+   "http_latency_ms_p95": 180,
+   "outcomes": {
+    "ok": 3
+   },
+   "polls_logged": 3
+  }
+ },
+ "station_observations": {
+  "age_cdf": {
+   "1800": 0.975,
+   "21600": 1.0,
+   "300": 0.975,
+   "3600": 0.975,
+   "60": 0.975,
+   "7200": 0.975,
+   "900": 0.975
+  },
+  "distinct_stations": 40,
+  "empty_share_by_hour_utc": {
+   "12": 0.0288
+  },
+  "observations": 1600,
+  "out_of_order": 0,
+  "repeat_share": 0.0244,
+  "stale_share": 0.025,
+  "top_empty_stations": [
+   {
+    "empty_observations": 40,
+    "empty_share": 1.0,
+    "station_id": "st-002"
+   },
+   {
+    "empty_observations": 6,
+    "empty_share": 0.15,
+    "station_id": "st-000"
+   }
+  ],
+  "unknown_station_rows": 40
+ },
+ "thresholds": {
+  "gap_threshold_s": 150,
+  "stale_minutes": 30.0
+ },
+ "verdict": "fail"
+}

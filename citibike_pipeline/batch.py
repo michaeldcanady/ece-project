@@ -23,7 +23,7 @@ import pyarrow as pa
 from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, decode
 
 from . import lake
-from .batch_log import BatchLog, BatchLogEntry
+from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .kafka_io import (
     KafkaBatchReader,
@@ -35,7 +35,7 @@ from .kafka_io import (
     ranges_to_json,
     total_messages,
 )
-from .metrics import Obs, pct, station_state, window_metrics
+from .metrics import Obs, station_state, window_metrics
 from .schemas import (
     CURRENT_STATE,
     DLQ,
@@ -100,38 +100,19 @@ class Plan:
 
 @dataclass(frozen=True)
 class Stats:
-    """What process_batch counted and wrote for a batch."""
+    """What process_batch counted and wrote for a batch. The JSON keeps the counts flat."""
     batch_id: str
     as_of: datetime
-    records_read: int
-    raw_rows: int
-    status_rows: int
-    weather_rows: int
-    dlq_rows: int
-    duplicates_dropped: int
-    repeats: int
-    out_of_order: int
-    stale: int
-    unknown_station: int
-    replay_rows: int
+    counts: Counts
     status_hours: Tuple[datetime, ...]
 
     def to_json(self) -> JsonObject:
-        return {"batch_id": self.batch_id, "as_of": iso(self.as_of), "records_read": self.records_read,
-                "raw_rows": self.raw_rows, "status_rows": self.status_rows, "weather_rows": self.weather_rows,
-                "dlq_rows": self.dlq_rows, "duplicates_dropped": self.duplicates_dropped,
-                "repeats": self.repeats, "out_of_order": self.out_of_order, "stale": self.stale,
-                "unknown_station": self.unknown_station, "replay_rows": self.replay_rows,
+        return {"batch_id": self.batch_id, "as_of": iso(self.as_of), **self.counts.to_json(),
                 "status_hours": [iso(h) for h in self.status_hours]}
 
     @classmethod
     def from_json(cls, obj: JsonObject) -> Stats:
-        return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])),
-                   records_read=int(obj["records_read"]), raw_rows=int(obj["raw_rows"]),
-                   status_rows=int(obj["status_rows"]), weather_rows=int(obj["weather_rows"]),
-                   dlq_rows=int(obj["dlq_rows"]), duplicates_dropped=int(obj["duplicates_dropped"]),
-                   repeats=int(obj["repeats"]), out_of_order=int(obj["out_of_order"]), stale=int(obj["stale"]),
-                   unknown_station=int(obj["unknown_station"]), replay_rows=int(obj["replay_rows"]),
+        return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])), counts=Counts.from_json(obj),
                    status_hours=tuple(parse_iso(str(h)) for h in obj["status_hours"]))
 
 
@@ -265,8 +246,10 @@ def _weather_rows(items, batch_id: str, processed_at: datetime) -> List[Dict[str
 
 def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[Dict[str, Dict[str, Any]]],
                       weather_obs: List[Dict[str, Any]], batch_id: str, processed_at: datetime,
-                      cfg: PipelineConfig) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """Dedup, flag, and enrich station observations in deterministic (time, partition, offset) order."""
+                      cfg: PipelineConfig) -> Tuple[List[Dict[str, Any]], Counts]:
+    """Dedup, flag, and enrich station observations in deterministic (time, partition, offset) order.
+
+    The Counts hold what this step sees (rows kept, dropped duplicates, flags); the caller fills in the rest."""
     max_lr: Dict[str, int] = {}
     seen: Set[Tuple[str, int]] = set()
     if prior is not None and prior.num_rows:
@@ -280,8 +263,7 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
     wx = sorted(weather_obs, key=lambda w: w["obs_time"])
     wx_t = [epoch(w["obs_time"]) for w in wx]
 
-    stats = {"duplicates_dropped": 0, "repeats": 0, "out_of_order": 0, "stale": 0,
-             "unknown_station": 0, "replay_rows": 0}
+    duplicates_dropped = repeats = out_of_order = stale = unknown_station = replay_rows = 0
     rows: List[Dict[str, Any]] = []
     delivered: Set[Tuple[str, str]] = set()
     stale_s = cfg.stale_minutes * 60
@@ -290,7 +272,7 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
         sid = p["station_id"]
         dup_key = (env.poll_id, sid)
         if dup_key in delivered:
-            stats["duplicates_dropped"] += 1
+            duplicates_dropped += 1
             continue
         delivered.add(dup_key)
 
@@ -310,11 +292,11 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
         if idx >= 0:
             w = wx[idx]
 
-        stats["repeats"] += is_repeat
-        stats["out_of_order"] += is_ooo
-        stats["stale"] += is_stale
-        stats["unknown_station"] += unknown
-        stats["replay_rows"] += env.replay
+        repeats += is_repeat
+        out_of_order += is_ooo
+        stale += is_stale
+        unknown_station += unknown
+        replay_rows += env.replay
         rows.append({
             "station_id": sid, "fetched_at": fetched, "last_reported": lr,
             "feed_last_updated": env.feed_last_updated,
@@ -335,7 +317,11 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
             "kafka_topic": rec.topic, "kafka_partition": rec.partition, "kafka_offset": rec.offset,
             "kafka_timestamp": _ts(rec.timestamp_ms), "batch_id": batch_id, "processed_at": processed_at,
         })
-    return rows, stats
+    counts = Counts(records_read=0, raw_rows=len(parsed.raw_rows), status_rows=len(rows), weather_rows=0,
+                    dlq_rows=len(parsed.dlq_rows), duplicates_dropped=duplicates_dropped, repeats=repeats,
+                    out_of_order=out_of_order, stale=stale, unknown_station=unknown_station,
+                    replay_rows=replay_rows)
+    return rows, counts
 
 
 def _load_dim(storage: Storage) -> Optional[Dict[str, Dict[str, Any]]]:
@@ -393,12 +379,8 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     if parsed.dlq_rows:
         put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id), to_table(parsed.dlq_rows, DLQ))
 
-    stats = Stats(
-        batch_id=batch_id, as_of=as_of, records_read=len(records), raw_rows=len(parsed.raw_rows),
-        status_rows=len(status_rows), weather_rows=len(weather_rows), dlq_rows=len(parsed.dlq_rows),
-        duplicates_dropped=counts["duplicates_dropped"], repeats=counts["repeats"],
-        out_of_order=counts["out_of_order"], stale=counts["stale"], unknown_station=counts["unknown_station"],
-        replay_rows=counts["replay_rows"], status_hours=tuple(status_hours))
+    stats = Stats(batch_id=batch_id, as_of=as_of, status_hours=tuple(status_hours),
+                  counts=replace(counts, records_read=len(records), weather_rows=len(weather_rows)))
     log.info("batch %s: read=%d raw=%d status=%d weather=%d dlq=%d as_of=%s", batch_id, len(records),
              len(parsed.raw_rows), len(status_rows), len(weather_rows), len(parsed.dlq_rows), iso(as_of))
     return stats
@@ -419,7 +401,7 @@ METRIC_COLS = [
 def compute_metrics(plan: Plan, stats: Stats, storage: Storage, cfg: PipelineConfig,
                     now: Optional[datetime] = None) -> Published:
     batch_id = plan.batch_id
-    if not stats.status_rows:
+    if not stats.counts.status_rows:
         return Published(published_at=None, stations=0)
     as_of = stats.as_of
     if storage.exists(lake.SERVING_SUMMARY):
@@ -514,7 +496,7 @@ def compute_metrics(plan: Plan, stats: Stats, storage: Storage, cfg: PipelineCon
 def batch_latencies(storage: Storage, plan: Plan, stats: Stats,
                     published_at: Optional[datetime]) -> List[float]:
     """Seconds from observation (or replay time) to the moment the serving files were written."""
-    if published_at is None or not stats.status_rows:
+    if published_at is None or not stats.counts.status_rows:
         return []
     t = lake.CURATED_STATUS.read_batch(storage, plan.batch_id, list(stats.status_hours),
                                        ["fetched_at", "replayed_at"])
@@ -526,27 +508,15 @@ def finalize_batch(plan: Plan, stats: Stats, published: Published,
                    reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                    now: Optional[datetime] = None) -> None:
     """Write the Batch log entry, then commit the plan's offsets, last of all."""
-    published_at = published.published_at
-    lat = sorted(batch_latencies(storage, plan, stats, published_at))
-    finished = now or utcnow()
-    as_of = stats.as_of
-    entry = BatchLogEntry(
-        batch_id=plan.batch_id, run_id=plan.run_id, as_of=as_of,
-        planned_at=plan.planned_at, published_at=published_at, finished_at=finished,
-        records_read=stats.records_read, raw_rows=stats.raw_rows, status_rows=stats.status_rows,
-        weather_rows=stats.weather_rows, dlq_rows=stats.dlq_rows,
-        duplicates_dropped=stats.duplicates_dropped, repeats=stats.repeats,
-        out_of_order=stats.out_of_order, stale=stats.stale,
-        unknown_station=stats.unknown_station, replay_rows=stats.replay_rows,
-        latency_p50_s=pct(lat, 0.50), latency_p95_s=pct(lat, 0.95),
-        latency_max_s=lat[-1] if lat else None, status="success")
+    latencies = Latencies.from_seconds(batch_latencies(storage, plan, stats, published.published_at))
+    entry = BatchLogEntry.from_batch(plan, stats, published, latencies, now or utcnow())
     BatchLog(storage).record(entry)
 
     reader.commit(plan.ranges)          # last: only after every output exists
     if storage.exists(PENDING_PLAN) and Plan.from_json(get_json(storage, PENDING_PLAN)).batch_id == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
-    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, entry.latency_p50_s,
-             entry.latency_p95_s)
+    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, latencies.p50_s,
+             latencies.p95_s)
 
 
 # ---------------------------------------------------------------------------------------------

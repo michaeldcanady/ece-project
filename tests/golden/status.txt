@@ -1,0 +1,12 @@
+ok                               True
+last_batch_finished_min_ago      0.9
+data_as_of                       2026-10-20T12:39:00+00:00
+stations                         40
+share_empty                      0.05
+share_full                       0.0
+share_stale                      0.025
+at_risk_empty                    3
+at_risk_full                     2
+batches_last_24h                 2
+dlq_rows_last_24h                40
+latency_p50_s_median_last_hour   126.0

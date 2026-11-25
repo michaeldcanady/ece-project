@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Optional
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -103,19 +104,45 @@ def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
     }
 
 
-def _batch_section(storage: Storage, start: datetime) -> Dict[str, Any]:
+@dataclass(frozen=True)
+class BatchLatency:
+    median_of_batch_p50: Optional[float]
+    p95_of_batch_p95: Optional[float]
+    max: Optional[float]
+
+
+@dataclass(frozen=True)
+class BatchSection:
+    """The day's Batch log entries, summed. Only built when the day had at least one batch."""
+    batches: int
+    records_read: int
+    dlq_rows: int
+    duplicates_dropped: int
+    replay_rows: int
+    latency_s: BatchLatency
+
+    def to_json(self) -> Mapping[str, object]:
+        """The report's `batches` object: the same keys, in the same order, as ever."""
+        return {"batches": self.batches, "records_read": self.records_read, "dlq_rows": self.dlq_rows,
+                "duplicates_dropped": self.duplicates_dropped, "replay_rows": self.replay_rows,
+                "latency_s": {"median_of_batch_p50": self.latency_s.median_of_batch_p50,
+                              "p95_of_batch_p95": self.latency_s.p95_of_batch_p95, "max": self.latency_s.max}}
+
+
+def _batch_section(storage: Storage, start: datetime) -> Optional[BatchSection]:
     rows = BatchLog(storage).day(start.date())
     if not rows:
-        return {"batches": 0}
-    p50 = sorted(r.latency_p50_s for r in rows if r.latency_p50_s is not None)
-    p95 = sorted(r.latency_p95_s for r in rows if r.latency_p95_s is not None)
-    return {
-        "batches": len(rows), "records_read": sum(r.records_read for r in rows),
-        "dlq_rows": sum(r.dlq_rows for r in rows), "duplicates_dropped": sum(r.duplicates_dropped for r in rows),
-        "replay_rows": sum(r.replay_rows for r in rows),
-        "latency_s": {"median_of_batch_p50": pct(p50, 0.5), "p95_of_batch_p95": pct(p95, 0.95),
-                      "max": max((r.latency_max_s for r in rows if r.latency_max_s is not None), default=None)},
-    }
+        return None
+    p50 = sorted(r.latencies.p50_s for r in rows if r.latencies.p50_s is not None)
+    p95 = sorted(r.latencies.p95_s for r in rows if r.latencies.p95_s is not None)
+    return BatchSection(
+        batches=len(rows), records_read=sum(r.counts.records_read for r in rows),
+        dlq_rows=sum(r.counts.dlq_rows for r in rows),
+        duplicates_dropped=sum(r.counts.duplicates_dropped for r in rows),
+        replay_rows=sum(r.counts.replay_rows for r in rows),
+        latency_s=BatchLatency(
+            median_of_batch_p50=pct(p50, 0.5), p95_of_batch_p95=pct(p95, 0.95),
+            max=max((r.latencies.max_s for r in rows if r.latencies.max_s is not None), default=None)))
 
 
 def _dlq_section(storage: Storage, start: datetime) -> Dict[str, Any]:
@@ -143,12 +170,13 @@ def verdict(report: Dict[str, Any]) -> str:
 
 def daily_quality(storage: Storage, cfg: PipelineConfig, day: date) -> Dict[str, Any]:
     start, end = _day_bounds(day)
+    batches = _batch_section(storage, start)
     report = {
         "day_utc": day.isoformat(), "thresholds": {"stale_minutes": cfg.stale_minutes,
                                                    "gap_threshold_s": cfg.gap_threshold_s},
         "polls": _poll_log_section(storage, cfg, start, end),
         "station_observations": _status_section(storage, start),
-        "batches": _batch_section(storage, start),
+        "batches": batches.to_json() if batches else {"batches": 0},
         "dlq": _dlq_section(storage, start),
     }
     report["verdict"] = verdict(report)

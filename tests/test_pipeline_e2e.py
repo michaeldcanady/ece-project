@@ -2,6 +2,7 @@
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fakes import load_capture
@@ -62,7 +63,7 @@ def drain(reader, storage, cfg, max_batches=50):
 
 
 def batch_log_rows(storage):
-    return BatchLog(storage).recent()
+    return BatchLog(storage).recent(now_of(100))
 
 
 def curated_rows(storage):
@@ -132,7 +133,7 @@ def test_pending_plan_is_dropped_when_its_offsets_no_longer_exist(tmp_path, capt
     _hold_back_half(consumer)
     fresh = batch.plan_batch("run_1", reader, storage, cfg)
     assert fresh.batch_id != stale.batch_id and fresh.first_run_id == "run_1"
-    assert batch.process_batch(fresh, reader, storage, cfg).records_read == fresh.total_messages
+    assert batch.process_batch(fresh, reader, storage, cfg).counts.records_read == fresh.total_messages
 
 
 def test_an_empty_plan_is_never_saved_as_pending(tmp_path, capture):
@@ -153,11 +154,11 @@ def test_full_drain_commits_everything_and_loses_nothing(tmp_path, capture):
     for (topic, part), entries in consumer.log.items():
         if topic != "citibike.station_info":
             assert consumer.commits[(topic, part)] == len(entries)
-    total_read = sum(st.records_read for _p, st in batches)
+    total_read = sum(st.counts.records_read for _p, st in batches)
     assert total_read == sum(len(v) for (t, _p), v in consumer.log.items() if t != "citibike.station_info")
     # accounting: raw rows + DLQ-without-raw == read; nothing silently vanishes
     for _p, st in batches:
-        assert st.status_rows + st.duplicates_dropped <= st.raw_rows
+        assert st.counts.status_rows + st.counts.duplicates_dropped <= st.counts.raw_rows
 
 
 def test_validation_flags_land_in_dlq_not_curated(tmp_path, capture):
@@ -278,10 +279,10 @@ def test_batch_log_holds_measured_values_not_constants(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     batches = drain(reader, storage, cfg)
     recent = batch_log_rows(storage)
-    entries = [e for e in recent if e.status_rows]
-    p50s = {e.latency_p50_s for e in entries}
-    assert len(p50s) > 1 and all(e.latency_p50_s >= 0 for e in entries)
-    assert all(e.latency_p95_s >= e.latency_p50_s for e in entries)
+    entries = [e for e in recent if e.counts.status_rows]
+    p50s = {e.latencies.p50_s for e in entries}
+    assert len(p50s) > 1 and all(e.latencies.p50_s >= 0 for e in entries)
+    assert all(e.latencies.p95_s >= e.latencies.p50_s for e in entries)
     assert len({r.batch_id for r in recent}) == len(recent) == len(batches)
 
 
@@ -419,7 +420,7 @@ def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, cap
     assert lake.compact_due(storage, now=START + timedelta(hours=4))     # e.g. a replay into old hours
     batch.finalize_batch(plan, stats, published, reader, storage, cfg, now=now_of(0))
     assert sorted(batch.batch_latencies(storage, plan, stats, published.published_at)) == direct
-    assert batch_log_rows(storage)[0].latency_p50_s is not None
+    assert batch_log_rows(storage)[0].latencies.p50_s is not None
 
 
 def test_retry_after_compaction_does_not_read_its_own_rows_as_prior_context(tmp_path, capture):
@@ -430,7 +431,7 @@ def test_retry_after_compaction_does_not_read_its_own_rows_as_prior_context(tmp_
     assert lake.compact_due(storage, now=START + timedelta(hours=4))
     retry = batch.process_batch(plan, reader, storage, cfg, now=now_of(0))
     for k in ("repeats", "out_of_order", "status_rows"):
-        assert getattr(retry, k) == getattr(first, k), k
+        assert getattr(retry.counts, k) == getattr(first.counts, k), k
 
 
 LAYOUT = r"^%s/dt=\d{4}-\d{2}-\d{2}/hr=\d{2}/%s$"
@@ -516,14 +517,16 @@ def test_serving_time_never_moves_backwards_when_partitions_skew(tmp_path, captu
     assert len(seen) > 5 and seen == sorted(seen)
 
 
-def test_status_reports_fresh_and_stale_lake(tmp_path, capture):
+def test_status_reports_fresh_and_stale_lake(tmp_path, capture, monkeypatch):
+    from citibike_pipeline import status
     from citibike_pipeline.status import summarize
+    monkeypatch.setattr(status, "utcnow", lambda: now_of(100))
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    assert summarize(storage, 5)["ok"] is False                       # nothing published yet
+    assert summarize(storage, 5).ok is False                       # nothing published yet
     drain(reader, storage, cfg)
     res = summarize(storage, max_age_min=10 ** 9)
-    assert res["ok"] and res["stations"] == 40 and res["batches_last_24h"] > 1
-    assert summarize(storage, max_age_min=1)["ok"] is False           # batches are from 2026-10-20: stale now
+    assert res.ok and res.health.stations == 40 and res.health.batches_last_24h > 1
+    assert summarize(storage, max_age_min=1).ok is False           # batches are from 2026-10-20: stale now
 
 
 def test_records_survive_an_xcom_round_trip_with_the_json_keys_of_the_old_dicts(tmp_path, capture):
@@ -539,3 +542,40 @@ def test_records_survive_an_xcom_round_trip_with_the_json_keys_of_the_old_dicts(
     with pytest.raises(KeyError):
         batch.Stats.from_json({k: v for k, v in stats.to_json().items() if k != "status_hours"})
     assert set(published.to_json()) == {"published_at", "stations", "at_risk"}
+
+
+GOLDEN = Path(__file__).parent / "golden"
+
+
+def _golden_lake(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    build_dim_station(reader, storage, cfg)
+    drain(reader, storage, cfg)
+    lake.compact_due(storage, now=START + timedelta(hours=4))
+    return cfg, storage
+
+
+def test_daily_quality_report_bytes_are_pinned(tmp_path, capture):
+    cfg, storage = _golden_lake(tmp_path, capture)
+    daily_quality(storage, cfg, START.date())
+    base = "quality/daily/dt=2026-10-20/"
+    assert storage.get(base + "report.json").decode() == (GOLDEN / "report.json").read_text()
+    assert storage.get(base + "report.md").decode() == (GOLDEN / "report.md").read_text()
+
+
+def test_citibike_status_output_is_pinned(tmp_path, capture, monkeypatch, capsys):
+    from citibike_pipeline import status
+    _cfg, storage = _golden_lake(tmp_path, capture)
+    monkeypatch.setattr(status, "storage_from_config", lambda _cfg: storage)
+    monkeypatch.setattr(status, "utcnow", lambda: START + timedelta(minutes=MINUTES, seconds=60))
+    assert status.main(["--max-age-min", "5"]) == 0
+    assert capsys.readouterr().out == (GOLDEN / "status.txt").read_text()
+
+
+def test_batch_log_parquet_columns_are_flat_and_unchanged(tmp_path, capture):
+    cfg, storage = _golden_lake(tmp_path, capture)
+    cols = read_parquet(storage, "gold/serving/batch_log_recent.parquet").column_names
+    assert cols == ["batch_id", "run_id", "as_of", "planned_at", "published_at", "finished_at",
+                    "records_read", "raw_rows", "status_rows", "weather_rows", "dlq_rows", "duplicates_dropped",
+                    "repeats", "out_of_order", "stale", "unknown_station", "replay_rows",
+                    "latency_p50_s", "latency_p95_s", "latency_max_s", "status"]
