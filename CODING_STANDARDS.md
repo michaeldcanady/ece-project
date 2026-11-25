@@ -26,3 +26,8 @@ See `.claude/rules/idempotent.md`: the same data in gives the same results out. 
 ## File layout
 
 See `.claude/rules/file-layout.md`: one type per file, and each function with its type or in a module named for its utility. Review a change against it.
+
+## Design principles
+
+See `.claude/rules/design-principles.md`: layered dependencies, refactors kept apart, ADRs, a small public surface.
+Review a change against it.

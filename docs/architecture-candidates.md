@@ -46,3 +46,41 @@ and `BatchSection` is typed only to be flattened back by `to_json`.
 
 **Caveat:** DAG tests already pin the order, in-flight XCom shapes constrain the codec, and there is no second
 orchestrator, so the seam is hypothetical. Do not do yet.
+
+## Audit against the design principles (2026-11-25)
+
+Findings from auditing the code against the handbook (`.claude/rules/design-principles.md`). Each is its own change.
+
+### 5. Counts: move the record into its own file
+
+**Files:** `citibike_pipeline/batch_log.py` (`Counts`), `enrichment.py`, `batch.py`.
+
+**Problem:** `Counts` lives in the Batch log module, which pulls in the lake and storage, so core `enrichment.py`
+imports infrastructure for a plain record. It also breaks the file-layout rule.
+
+**Direction:** `counts.py` holds `Counts` in the core layer; `batch_log.py` and `enrichment.py` import it from there.
+
+### 6. Pipeline config: split the pure value from its environment loader
+
+**Files:** `citibike_pipeline/config.py`, and its importers `snapshot.py`, `metrics.py`, `enrichment.py`, `storage.py`.
+
+**Problem:** `PipelineConfig` (a value) and the code that reads it from the environment share a module, so core modules
+that only need the value sit above the environment reader.
+
+**Direction:** a pure `PipelineConfig` in the core layer; the environment loader in infrastructure.
+
+### 7. Station dimension build: split by layer
+
+**Files:** `citibike_pipeline/station_info.py`. Joins candidate 2.
+
+**Problem:** one module parses and validates station information (pure) and also reads Kafka and writes the lake.
+
+**Direction:** the pure build in core, the read and write in orchestration, as part of candidate 2's module.
+
+### 8. Batch log entry: record the config and code version
+
+**Files:** `citibike_pipeline/batch_log.py`, `schemas.py`.
+
+**Problem:** a Batch log entry cannot be traced to the config and code that produced it.
+
+**Direction:** add both to the entry. This changes the Batch log schema, so it is separate from the rule and the check.
