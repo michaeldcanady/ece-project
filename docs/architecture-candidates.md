@@ -84,3 +84,14 @@ that only need the value sit above the environment reader.
 **Problem:** a Batch log entry cannot be traced to the config and code that produced it.
 
 **Direction:** add both to the entry. This changes the Batch log schema, so it is separate from the rule and the check.
+
+### 9. Core modules that import infrastructure: Record and the Batch log type imports
+
+**Files:** `citibike_pipeline/observations.py` (imports `Record` from `kafka_io.py`), `batch_log.py` (imports `Plan`,
+`Stats`, `Published` from `batch.py` under `TYPE_CHECKING`).
+
+**Problem:** a core module imports an infrastructure one for a plain record, and the Batch log (infrastructure) imports
+the orchestration layer for types. Both are in `BASELINE` in `scripts/check_layers.py`.
+
+**Direction:** move `Record` to its own core file; have `batch.py` pass the step records in, or move them below the
+Batch log, so the import points down. Remove the baseline entries when done.

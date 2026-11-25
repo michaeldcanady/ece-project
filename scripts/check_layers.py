@@ -155,6 +155,8 @@ def _layer(entry: str) -> Tuple[str, str]:
 
 
 def _is_higher(importer: Tuple[str, str], imported: Tuple[str, str], chains: Mapping[str, Sequence[str]]) -> bool:
+    # Within a chain, higher means later in its list. Across chains, only the shared contract may be imported,
+    # except by the DAGs, which sit above both packages.
     if importer[0] == imported[0]:
         order = chains[importer[0]]
         return order.index(imported[1]) > order.index(importer[1])

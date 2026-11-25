@@ -29,7 +29,7 @@ def _tree(tmp_path, files: Mapping[str, str]) -> str:
     return str(tmp_path)
 
 
-def _run(tmp_path, files, layer_map=LAYER_MAP, baseline: FrozenSet[Tuple[str, str]] = frozenset(), capsys=None):
+def _run(tmp_path, files, layer_map=LAYER_MAP, baseline: FrozenSet[Tuple[str, str]] = frozenset(), *, capsys):
     root = _tree(tmp_path, {"pkg/__init__.py": "", "pkg/core_a.py": "", "pkg/core_b.py": "",
                             "pkg/infra.py": "", "pkg/entry.py": "", **files})
     code = check_layers.main(root, layer_map, baseline, CHAINS, ("pkg",))
