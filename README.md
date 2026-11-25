@@ -63,7 +63,7 @@ report; Kafka keeps 21 days, so the micro-batch catches up on whatever was inges
 | `citibike_ingest_weather` | every 15 min | polls Open-Meteo current conditions | 2 |
 | `citibike_station_info` | :05 hourly | polls station_information, then rebuilds the station dimension | 2 |
 | `citibike_micro_batch` | every minute | plan → process → metrics → finalize (see Design) | 2 |
-| `citibike_compaction` | :20 hourly | merges each completed hour's per-minute files into one | 1 |
+| `citibike_compaction` | :20 hourly | merges each completed hour's per-batch files into one | 1 |
 | `citibike_daily_quality` | 00:30 UTC | quality report for the previous UTC day | 1 |
 | `citibike_replay` | manual | replays a capture into Kafka | none |
 
@@ -170,7 +170,7 @@ Replay into a clean lake. Serving time never moves backwards, so replaying older
 ```
 citibike_contract/   topic names, event types, envelope schema version, timestamp format (stdlib only)
 citibike_producer/   ingest library: polling jobs, Kafka sink, replay, synthetic capture, topic creation
-citibike_pipeline/   processing library: micro-batch, metrics, validation, storage, compaction, quality
+citibike_pipeline/   processing library: micro-batch, metrics, validation, storage, lake tables and compaction, quality
 dags/                thin DAGs that call the libraries; shared settings in dags/_common.py
 data/sample/         the committed (synthetic) sample capture
 .devcontainer/       compose stack, dev container definition, Airflow image

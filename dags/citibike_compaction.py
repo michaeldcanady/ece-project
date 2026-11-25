@@ -1,4 +1,4 @@
-"""Hourly: merge per-minute files of completed hours (older than 2 h) into one file per hour."""
+"""Hourly: merge the per-batch files of completed hours (older than 2 h) into one file per hour."""
 from datetime import timedelta
 
 from _common import DAG_KWARGS, default_args

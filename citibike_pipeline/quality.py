@@ -20,8 +20,7 @@ log = logging.getLogger(__name__)
 
 AGE_EDGES_S = [60, 300, 900, 1800, 3600, 7200, 21600]     # for the stale-threshold distribution
 STATUS_COLS = ["station_id", "fetched_at", "age_s", "is_stale", "is_repeat", "is_out_of_order",
-                               "is_unknown_station", "num_bikes_available", "is_installed", "is_renting",
-                               "is_returning"]
+               "is_unknown_station", "num_bikes_available", "is_installed", "is_renting", "is_returning"]
 
 
 def _day_bounds(day: date):

@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -34,6 +34,8 @@ SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
 BATCH_LOG = "ops/batch_log"
 
 IDENTITY = ["kafka_topic", "kafka_partition", "kafka_offset"]
+_EVENT_TIME = "fetched_at"                                     # every lake table's event time
+_SORT_BY = (_EVENT_TIME, "kafka_partition", "kafka_offset")    # row order inside a compacted file
 _COMPACTED = "compacted.parquet"
 _HOUR = re.compile(r"/dt=(\d{4}-\d{2}-\d{2})/hr=(\d{2})/")
 
@@ -46,6 +48,11 @@ def partition_path(prefix: str, when: datetime) -> str:
 
 def part_key(prefix: str, when: datetime, name: str) -> str:
     return "%s/%s" % (partition_path(prefix, when), name)
+
+
+def _hour_from_key(key: str) -> Optional[datetime]:
+    m = _HOUR.search(key)
+    return datetime.strptime("%s %s" % m.groups(), "%Y-%m-%d %H").replace(tzinfo=timezone.utc) if m else None
 
 
 def _floor_hour(when: datetime) -> datetime:
@@ -78,12 +85,11 @@ def _dedupe_identity(table: pa.Table) -> pa.Table:
 
 @dataclass(frozen=True)
 class LakeTable:
-    """Kafka-sourced rows split into hour partitions by `event_time`; no two rows share a Kafka identity."""
+    """Kafka-sourced rows split into hour partitions by event time (fetched_at); no two rows share a
+    Kafka identity."""
 
     prefix: str
     schema: pa.Schema
-    event_time: str = "fetched_at"
-    sort_by: Tuple[str, ...] = ("fetched_at", "kafka_partition", "kafka_offset")
 
     # -- write --
 
@@ -94,7 +100,7 @@ class LakeTable:
         batch's earlier files meanwhile, reads and the next compaction drop the duplicate rows."""
         groups: Dict[datetime, List[Dict[str, Any]]] = {}
         for r in rows:
-            groups.setdefault(_floor_hour(r[self.event_time]), []).append(r)
+            groups.setdefault(_floor_hour(r[_EVENT_TIME]), []).append(r)
         for hour, rs in sorted(groups.items()):
             put_parquet(storage, self._batch_key(hour, batch_id), to_table(rs, self.schema))
         return sorted(groups)
@@ -107,25 +113,26 @@ class LakeTable:
 
         Rows written by `exclude_batch` are left out, so a retry never reads its own earlier output.
         Safe to run while compaction merges the same hours."""
-        columns = list(columns or self.schema.names)
-        needed = list(dict.fromkeys(columns + IDENTITY + [self.event_time]
+        columns = self._columns(columns)
+        needed = list(dict.fromkeys(columns + IDENTITY + [_EVENT_TIME]
                                     + (["batch_id"] if exclude_batch else [])))
         tables: List[pa.Table] = []
         for hour in _hours_between(start, end):
             tables.extend(self._read_hour(storage, hour, needed, exclude_batch))
         if not tables:
-            return pa.Table.from_pylist([], schema=pa.schema([self.schema.field(c) for c in columns]))
+            return self._empty(columns)
         table = _dedupe_identity(pa.concat_tables(tables))
-        t = table[self.event_time]
+        t = table[_EVENT_TIME]
         mask = pc.and_(pc.greater_equal(t, pa.scalar(start, TS)), pc.less(t, pa.scalar(end, TS)))
         if exclude_batch:
-            mask = pc.and_(mask, pc.not_equal(table["batch_id"], exclude_batch))
+            ids = table["batch_id"]          # null-safe: a row without a batch_id is never excluded
+            mask = pc.and_(mask, pc.or_kleene(pc.is_null(ids), pc.not_equal(ids, exclude_batch)))
         return table.filter(mask).select(columns)
 
     def read_batch(self, storage: Storage, batch_id: str, hours: Iterable[datetime],
                    columns: Optional[List[str]] = None) -> pa.Table:
         """The rows `batch_id` wrote in `hours` (as returned by `write`), also after compaction merged them."""
-        columns = list(columns or self.schema.names)
+        columns = self._columns(columns)
         tables = []
         for hour in sorted(set(_floor_hour(h) for h in hours)):
             try:
@@ -135,7 +142,7 @@ class LakeTable:
                                       columns=list(dict.fromkeys(columns + ["batch_id"])))
                 tables.append(merged.filter(pc.equal(merged["batch_id"], batch_id)).select(columns))
         if not tables:
-            return pa.Table.from_pylist([], schema=pa.schema([self.schema.field(c) for c in columns]))
+            return self._empty(columns)
         return pa.concat_tables(tables)
 
     # -- compact --
@@ -148,7 +155,7 @@ class LakeTable:
         if not sources:
             return {"sources": 0, "rows": 0}
         table = _dedupe_identity(pa.concat_tables([read_parquet(storage, k) for k in keys]))
-        table = table.sort_by([(c, "ascending") for c in self.sort_by])
+        table = table.sort_by([(c, "ascending") for c in _SORT_BY])
         put_parquet(storage, target, table)          # written before anything is deleted (see _read_hour)
         written = read_parquet(storage, target, columns=IDENTITY).num_rows
         if written != table.num_rows:
@@ -160,14 +167,16 @@ class LakeTable:
 
     def hours(self, storage: Storage) -> List[datetime]:
         """Every hour partition holding at least one file."""
-        found = set()
-        for key in storage.list(self.prefix + "/"):
-            m = _HOUR.search(key[len(self.prefix):])
-            if m:
-                found.add(datetime.strptime("%s %s" % m.groups(), "%Y-%m-%d %H").replace(tzinfo=timezone.utc))
-        return sorted(found)
+        found = {_hour_from_key(key[len(self.prefix):]) for key in storage.list(self.prefix + "/")}
+        return sorted(h for h in found if h is not None)
 
     # -- internals --
+
+    def _columns(self, columns: Optional[List[str]]) -> List[str]:
+        return list(columns) if columns is not None else list(self.schema.names)
+
+    def _empty(self, columns: List[str]) -> pa.Table:
+        return pa.Table.from_pylist([], schema=pa.schema([self.schema.field(c) for c in columns]))
 
     def _key(self, hour: datetime, name: str) -> str:
         return part_key(self.prefix, hour, name)
@@ -216,6 +225,8 @@ def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int
     concurrent reads safe. Reads stay lossless on their own (see LakeTable._read_hour), because
     lookbacks (3 h for weather), catch-up and replay all reach hours older than the lag."""
     now = now or utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)      # hour partitions are UTC
     cutoff = now - timedelta(hours=lag_hours)
     result: Dict[str, Dict[str, int]] = {}
     for table in LAKE_TABLES:
@@ -232,6 +243,11 @@ def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int
 
 def hours_from_legacy_keys(keys: Iterable[str]) -> List[datetime]:
     """The hours named by batch file keys, for stats written before process_batch returned hours.
-    Remove once no in-flight micro-batch run can still hold such stats."""
-    return sorted({datetime.strptime("%s %s" % m.groups(), "%Y-%m-%d %H").replace(tzinfo=timezone.utc)
-                   for m in (_HOUR.search(k) for k in keys) if m})
+    Remove once no in-flight micro-batch run can still hold such stats. Raises on a key without an hour."""
+    hours = set()
+    for key in keys:
+        hour = _hour_from_key(key)
+        if hour is None:
+            raise ValueError("not a lake table batch file key: %r" % key)
+        hours.add(hour)
+    return sorted(hours)

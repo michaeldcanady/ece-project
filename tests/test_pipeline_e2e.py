@@ -347,6 +347,37 @@ def test_read_window_excludes_a_batch_also_inside_compacted_files(tmp_path, capt
     assert sorted(after["batch_id"].to_pylist()) == sorted(others["batch_id"].to_pylist())
 
 
+def test_read_window_never_excludes_rows_without_a_batch_id(tmp_path):
+    storage = LocalStorage(str(tmp_path))
+    rows = [{"kafka_topic": "t", "kafka_partition": 0, "kafka_offset": i, "fetched_at": START + timedelta(minutes=i),
+             "event_type": "poll_log", "batch_id": b} for i, b in enumerate([None, "bA", "bB"])]
+    lake.RAW_POLL_LOG.write(storage, "mixed", rows)
+    for compact in (False, True):
+        if compact:
+            lake.RAW_POLL_LOG.compact_hour(storage, HOUR)
+        t = lake.RAW_POLL_LOG.read_window(storage, HOUR, HOUR + timedelta(hours=1), ["batch_id"], exclude_batch="bA")
+        assert sorted(t["batch_id"].to_pylist(), key=str) == [None, "bB"], compact
+
+
+def test_compact_due_treats_a_naive_now_as_utc(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    drain(reader, storage, cfg)
+    naive = (START + timedelta(hours=4)).replace(tzinfo=None)
+    assert lake.compact_due(storage, now=naive)
+    assert lake.compact_due(storage, now=START + timedelta(hours=4)) == {}
+
+
+def test_batch_latencies_fail_loudly_without_hours(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
+    published_at = START + timedelta(minutes=MINUTES)
+    no_hours = {k: v for k, v in stats.items() if k != "status_hours"}
+    with pytest.raises(KeyError):
+        batch.batch_latencies(storage, plan, no_hours, published_at)
+    with pytest.raises(ValueError):
+        batch.batch_latencies(storage, plan, dict(no_hours, status_keys=["not/a/batch/key.parquet"]), published_at)
+
+
 def test_read_batch_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     assert len(drain(reader, storage, cfg)) > 1
@@ -402,7 +433,6 @@ def test_lake_table_on_disk_layout(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
     tables = ["raw/station_status", "raw/weather", "raw/poll_log", "curated/station_status", "curated/weather"]
-    assert [t.prefix for t in lake.LAKE_TABLES] == tables
     for prefix in tables:
         keys = storage.list(prefix + "/")
         assert keys, prefix

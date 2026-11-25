@@ -429,8 +429,11 @@ def batch_latencies(storage: Storage, plan: Dict[str, Any], stats: Dict[str, Any
         return []
     if "status_hours" in stats:
         hours = [parse_iso(h) for h in stats["status_hours"]]
-    else:                                   # stats from a run started before the deploy that added hours
-        hours = lake.hours_from_legacy_keys(stats.get("status_keys", []))
+    elif "status_keys" in stats:            # stats from a run started before the deploy that added hours
+        hours = lake.hours_from_legacy_keys(stats["status_keys"])
+    else:
+        raise KeyError("stats of batch %s have status rows but neither status_hours nor status_keys"
+                       % plan["batch_id"])
     t = lake.CURATED_STATUS.read_batch(storage, plan["batch_id"], hours, ["fetched_at", "replayed_at"])
     return [max((published_at - (r or f)).total_seconds(), 0.0)
             for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist())]
