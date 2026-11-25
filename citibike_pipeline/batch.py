@@ -34,6 +34,7 @@ from .kafka_io import (
     total_messages,
 )
 from .observations import Delivered, Rejected, StationStatus, WeatherObservation
+from .rows import CuratedWeatherRow, as_mappings
 from .schemas import (
     DLQ,
     to_table,
@@ -219,19 +220,6 @@ def parse_records(records: List[Record], batch_id: str, processed_at: datetime,
     return out
 
 
-def _weather_rows(items: List[Delivered[WeatherObservation]], batch_id: str,
-                  processed_at: datetime) -> List[Dict[str, Any]]:
-    return [{
-        "location_id": w.location_id, "obs_time": w.obs_time, "fetched_at": env.fetched_at,
-        "temperature_c": w.temperature_c, "relative_humidity": w.relative_humidity,
-        "precipitation_mm": w.precipitation_mm, "rain_mm": w.rain_mm,
-        "snowfall_cm": w.snowfall_cm, "weather_code": w.weather_code,
-        "cloud_cover": w.cloud_cover, "wind_speed_kmh": w.wind_speed_kmh,
-        "poll_id": env.poll_id, "kafka_topic": rec.topic, "kafka_partition": rec.partition,
-        "kafka_offset": rec.offset, "batch_id": batch_id, "processed_at": processed_at,
-    } for rec, env, w in ((d.record, d.envelope, d.value) for d in items)]
-
-
 def _load_dim(storage: Storage) -> Optional[Dimension]:
     if not storage.exists(lake.DIM_STATION_CURRENT):
         return None
@@ -271,7 +259,7 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     prior_weather_t = lake.CURATED_WEATHER.read_window(storage, ctx_end - timedelta(hours=3),
                                                        max(all_times) + timedelta(milliseconds=1),
                                                        WEATHER_READING_COLS, exclude_batch=batch_id)
-    weather_rows = _weather_rows(parsed.weather, batch_id, processed_at)
+    weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in parsed.weather]
     weather_readings = (WeatherReading.from_table(prior_weather_t)
                         + [WeatherReading.from_observation(d.value) for d in parsed.weather])
 
@@ -284,8 +272,8 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
         by_event[r["event_type"]].append(r)
     for et, rows in by_event.items():
         lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, rows)
-    status_hours = lake.CURATED_STATUS.write(storage, batch_id, status_rows)
-    lake.CURATED_WEATHER.write(storage, batch_id, weather_rows)
+    status_hours = lake.CURATED_STATUS.write(storage, batch_id, as_mappings(status_rows))
+    lake.CURATED_WEATHER.write(storage, batch_id, as_mappings(weather_rows))
     if parsed.dlq_rows:
         put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id), to_table(parsed.dlq_rows, DLQ))
 

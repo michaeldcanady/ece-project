@@ -32,7 +32,7 @@ def enrich(statuses, prior=NO_PRIOR, dimension=None, weather=()):
 
 def test_a_fresh_observation_has_no_flags():
     rows, counts = enrich([delivered()])
-    assert [(r["is_repeat"], r["is_out_of_order"], r["is_stale"], r["is_unknown_station"]) for r in rows] == [
+    assert [(r.is_repeat, r.is_out_of_order, r.is_stale, r.is_unknown_station) for r in rows] == [
         (False, False, False, False)]
     assert (counts.status_rows, counts.repeats, counts.out_of_order, counts.stale) == (1, 0, 0, 0)
 
@@ -45,40 +45,40 @@ def test_the_same_station_and_poll_is_dropped_once_and_counted():
 def test_a_repeated_last_reported_is_flagged_within_the_batch_and_against_prior_rows():
     rows, counts = enrich([delivered(last_reported=100, poll_id="p1"), delivered(last_reported=100, poll_id="p2",
                                                                                   minutes=1, offset=1)])
-    assert [r["is_repeat"] for r in rows] == [False, True] and counts.repeats == 1
+    assert [r.is_repeat for r in rows] == [False, True] and counts.repeats == 1
     prior = PriorContext(seen=frozenset({("a", 100)}), max_last_reported={"a": 100})
     rows, _ = enrich([delivered(last_reported=100)], prior=prior)
-    assert rows[0]["is_repeat"]
+    assert rows[0].is_repeat
 
 
 def test_an_older_last_reported_than_already_seen_is_out_of_order():
     prior = PriorContext(seen=frozenset({("a", 200)}), max_last_reported={"a": 200})
     rows, counts = enrich([delivered(last_reported=150)], prior=prior)
-    assert rows[0]["is_out_of_order"] and counts.out_of_order == 1
+    assert rows[0].is_out_of_order and counts.out_of_order == 1
 
 
 def test_observations_are_processed_in_time_then_offset_order_whatever_the_input_order():
     late = delivered(last_reported=300, minutes=2, poll_id="p2", offset=1)
     early = delivered(last_reported=100, minutes=1, poll_id="p1", offset=0)
     rows, counts = enrich([late, early])
-    assert [r["last_reported"] for r in rows] == [100, 300] and counts.out_of_order == 0
+    assert [r.last_reported for r in rows] == [100, 300] and counts.out_of_order == 0
 
 
 def test_an_observation_older_than_the_stale_threshold_is_stale():
     old = int(T0.timestamp()) - CFG.stale_minutes * 60 - 1
     rows, counts = enrich([delivered(last_reported=old)])
-    assert rows[0]["is_stale"] and rows[0]["age_s"] == CFG.stale_minutes * 60 + 1 and counts.stale == 1
+    assert rows[0].is_stale and rows[0].age_s == CFG.stale_minutes * 60 + 1 and counts.stale == 1
 
 
 def test_a_station_missing_from_the_dimension_is_unknown_and_a_known_one_is_named():
     dimension = {"a": {"name": "Alpha", "lat": 40.7, "lon": -74.0, "capacity": 20}}
     rows, counts = enrich([delivered("a"), delivered("zz", poll_id="p2", offset=1)], dimension=dimension)
-    by_station = {r["station_id"]: r for r in rows}
-    assert by_station["a"]["station_name"] == "Alpha" and not by_station["a"]["is_unknown_station"]
-    assert by_station["zz"]["is_unknown_station"] and by_station["zz"]["station_name"] is None
+    by_station = {r.station_id: r for r in rows}
+    assert by_station["a"].station_name == "Alpha" and not by_station["a"].is_unknown_station
+    assert by_station["zz"].is_unknown_station and by_station["zz"].station_name is None
     assert counts.unknown_station == 1
     rows, counts = enrich([delivered("zz")], dimension=None)       # no dimension built yet: nothing is unknown
-    assert not rows[0]["is_unknown_station"] and counts.unknown_station == 0
+    assert not rows[0].is_unknown_station and counts.unknown_station == 0
 
 
 def test_a_row_takes_the_latest_weather_at_or_before_its_fetch_time():
@@ -86,9 +86,9 @@ def test_a_row_takes_the_latest_weather_at_or_before_its_fetch_time():
         return WeatherReading(T0 + timedelta(minutes=minutes), temp, None, None, None)
     weather = [reading(5, 20.0), reading(-10, 5.0), reading(-1, 9.0)]            # unsorted on purpose
     rows, _ = enrich([delivered(minutes=0)], weather=weather)
-    assert rows[0]["temperature_c"] == 9.0
+    assert rows[0].temperature_c == 9.0
     rows, _ = enrich([delivered(minutes=0)], weather=[reading(5, 20.0)])           # only a later observation
-    assert rows[0]["temperature_c"] is None
+    assert rows[0].temperature_c is None
 
 
 def test_replayed_rows_are_counted():
