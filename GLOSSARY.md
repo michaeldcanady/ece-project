@@ -25,6 +25,20 @@ Merging an hour partition's per-batch files into one file once the hour is old e
 losing or duplicating a row.
 _Avoid_: merge, cleanup
 
+**Batch**:
+The offset ranges one micro-batch reads and processes, identified by its batch id. A batch can span several
+Airflow runs when one fails and a later run takes it over.
+_Avoid_: run, job
+
+**Batch id**:
+A hash of a batch's planned offset ranges. Every rerun of the same ranges writes the same keys, so a rerun
+overwrites instead of duplicating.
+_Avoid_: run id (that names an Airflow run, not the data)
+
+**Plan**:
+A batch's offset ranges, fixed before anything is read and reused until its offsets are committed.
+_Avoid_: schedule
+
 **Batch log**:
 The record of micro-batch runs: one entry per batch, with its counts and latencies.
 _Avoid_: run log, ops log
