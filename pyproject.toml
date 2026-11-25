@@ -34,7 +34,8 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "B", "I", "UP"]
-# House style: typing.Optional/Dict/List and %-formatting (Airflow 2.7 and the producer image run Python 3.9).
+# House style: typing.Optional/List and %-formatting (Airflow 2.7 and the producer image run Python 3.9).
+# Any and Dict are banned by scripts/check_strong_types.py (see CODING_STANDARDS.md).
 ignore = ["UP006", "UP007", "UP031", "UP035", "UP045"]
 
 [tool.ruff.lint.isort]

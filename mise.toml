@@ -62,12 +62,16 @@ description = "Verify messages in both main topics"
 depends = ["kafka:consume-status", "kafka:consume-poll"]
 
 [tasks.lint]
-description = "Lint (ruff)"
-run = "uv run ruff check ."
+description = "Lint: ruff, then the strong-types check"
+run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py"]
 
 [tasks.test]
 description = "Run the tests (no network or broker needed)"
 run = "uv run pytest -v"
+
+[tasks.check]
+description = "Everything CI and the pre-commit hook run: lint, then tests"
+run = ["mise run lint", "uv run pytest -q"]
 
 [tasks."smoke:replay"]
 description = "Replay the committed sample through the running stack"
