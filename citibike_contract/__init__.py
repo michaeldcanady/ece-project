@@ -48,3 +48,7 @@ def parse_iso(value: str) -> datetime:
 
 def iso_to_epoch_ms(value: str) -> int:
     return int(parse_iso(value).timestamp() * 1000)
+
+
+# Re-exported last: the envelope module reads the names above.
+from citibike_contract.envelope import Envelope, decode  # noqa: E402, F401
