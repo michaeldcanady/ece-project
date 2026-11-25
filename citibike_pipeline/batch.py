@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pyarrow as pa
 
-from citibike_contract import EVENT_TYPE_BY_TOPIC
+from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, decode
+from citibike_contract.envelope import InvalidEnvelope
 
 from . import lake
 from .config import DATA_TOPICS, PipelineConfig
@@ -45,7 +46,6 @@ from .schemas import (
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import epoch, floor_5min, from_epoch, iso, parse_iso, utcnow
 from .validation import (
-    parse_envelope,
     validate_poll_log_payload,
     validate_status_payload,
     validate_weather_payload,
@@ -100,8 +100,8 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
 class Parsed:
     raw_rows: List[Dict[str, Any]] = field(default_factory=list)
     dlq_rows: List[Dict[str, Any]] = field(default_factory=list)
-    status: List[Tuple[Record, Dict[str, Any], datetime]] = field(default_factory=list)
-    weather: List[Tuple[Record, Dict[str, Any], datetime]] = field(default_factory=list)
+    status: List[Tuple[Record, Envelope]] = field(default_factory=list)
+    weather: List[Tuple[Record, Envelope]] = field(default_factory=list)
     records_read: int = 0
 
 
@@ -120,29 +120,28 @@ def parse_records(records: List[Record], batch_id: str, processed_at: datetime,
                   cfg: PipelineConfig) -> Parsed:
     out = Parsed(records_read=len(records))
     for rec in records:
-        env, errors = parse_envelope(rec.value)
-        if errors:
-            out.dlq_rows.append(_dlq(rec, ",".join(errors), batch_id, processed_at))
+        try:
+            env = decode(rec.value)
+        except InvalidEnvelope as e:
+            out.dlq_rows.append(_dlq(rec, ",".join(e.reasons), batch_id, processed_at))
             continue
-        et, payload = env["event_type"], env["payload"]
+        et, payload, fetched = env.event_type, env.payload, env.fetched_at
         if EVENT_TYPE_BY_TOPIC.get(rec.topic) != et:
             out.dlq_rows.append(_dlq(rec, "event_type_topic_mismatch", batch_id, processed_at))
             continue
-        fetched = parse_iso(env["fetched_at"])
         if et == "station_status":
             reasons = validate_status_payload(payload, epoch(fetched), cfg.future_skew_s)
         elif et == "weather_current":
             reasons = validate_weather_payload(payload)
         else:
             reasons = validate_poll_log_payload(payload)
-        replayed_at = parse_iso(env["replayed_at"]) if env.get("replayed_at") else None
         out.raw_rows.append({
             "kafka_topic": rec.topic, "kafka_partition": rec.partition, "kafka_offset": rec.offset,
-            "kafka_timestamp": _ts(rec.timestamp_ms), "event_type": et, "poll_id": env.get("poll_id"),
-            "source": env.get("source"), "source_url": env.get("source_url"),
-            "gbfs_version": env.get("gbfs_version"), "feed_last_updated": env.get("feed_last_updated"),
-            "fetched_at": fetched, "producer_version": env.get("producer_version"),
-            "replay": bool(env.get("replay", False)), "replayed_at": replayed_at,
+            "kafka_timestamp": _ts(rec.timestamp_ms), "event_type": et, "poll_id": env.poll_id,
+            "source": env.source, "source_url": env.source_url,
+            "gbfs_version": env.gbfs_version, "feed_last_updated": env.feed_last_updated,
+            "fetched_at": fetched, "producer_version": env.producer_version,
+            "replay": env.replay, "replayed_at": env.replayed_at,
             "payload_json": json.dumps(payload, separators=(",", ":")),
             "batch_id": batch_id, "processed_at": processed_at,
         })
@@ -150,24 +149,24 @@ def parse_records(records: List[Record], batch_id: str, processed_at: datetime,
             out.dlq_rows.append(_dlq(rec, ",".join(reasons), batch_id, processed_at))
             continue
         if et == "station_status":
-            out.status.append((rec, env, fetched))
+            out.status.append((rec, env))
         elif et == "weather_current":
-            out.weather.append((rec, env, fetched))
+            out.weather.append((rec, env))
     return out
 
 
 def _weather_rows(items, batch_id: str, processed_at: datetime) -> List[Dict[str, Any]]:
     rows = []
-    for rec, env, fetched in items:
-        p = env["payload"]
+    for rec, env in items:
+        p = env.payload
         cur = p["current"]
         rows.append({
-            "location_id": p.get("location_id"), "obs_time": from_epoch(cur["time"]), "fetched_at": fetched,
+            "location_id": p.get("location_id"), "obs_time": from_epoch(cur["time"]), "fetched_at": env.fetched_at,
             "temperature_c": cur.get("temperature_2m"), "relative_humidity": cur.get("relative_humidity_2m"),
             "precipitation_mm": cur.get("precipitation"), "rain_mm": cur.get("rain"),
             "snowfall_cm": cur.get("snowfall"), "weather_code": cur.get("weather_code"),
             "cloud_cover": cur.get("cloud_cover"), "wind_speed_kmh": cur.get("wind_speed_10m"),
-            "poll_id": env.get("poll_id"), "kafka_topic": rec.topic, "kafka_partition": rec.partition,
+            "poll_id": env.poll_id, "kafka_topic": rec.topic, "kafka_partition": rec.partition,
             "kafka_offset": rec.offset, "batch_id": batch_id, "processed_at": processed_at,
         })
     return rows
@@ -195,10 +194,10 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
     rows: List[Dict[str, Any]] = []
     delivered: Set[Tuple[str, str]] = set()
     stale_s = cfg.stale_minutes * 60
-    for rec, env, fetched in sorted(parsed.status, key=lambda x: (x[2], x[0].partition, x[0].offset)):
-        p = env["payload"]
+    for rec, env in sorted(parsed.status, key=lambda x: (x[1].fetched_at, x[0].partition, x[0].offset)):
+        p, fetched = env.payload, env.fetched_at
         sid = p["station_id"]
-        dup_key = (env["poll_id"], sid)
+        dup_key = (env.poll_id, sid)
         if dup_key in delivered:
             stats["duplicates_dropped"] += 1
             continue
@@ -220,15 +219,14 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
         if idx >= 0:
             w = wx[idx]
 
-        replayed_at = parse_iso(env["replayed_at"]) if env.get("replayed_at") else None
         stats["repeats"] += is_repeat
         stats["out_of_order"] += is_ooo
         stats["stale"] += is_stale
         stats["unknown_station"] += unknown
-        stats["replay_rows"] += bool(env.get("replay", False))
+        stats["replay_rows"] += env.replay
         rows.append({
             "station_id": sid, "fetched_at": fetched, "last_reported": lr,
-            "feed_last_updated": env.get("feed_last_updated"),
+            "feed_last_updated": env.feed_last_updated,
             "num_bikes_available": p["num_bikes_available"], "num_ebikes_available": p.get("num_ebikes_available"),
             "num_docks_available": p["num_docks_available"], "num_bikes_disabled": p.get("num_bikes_disabled"),
             "num_docks_disabled": p.get("num_docks_disabled"),
@@ -242,7 +240,7 @@ def build_status_rows(parsed: Parsed, prior: Optional[pa.Table], dim: Optional[D
             "precipitation_mm": w["precipitation_mm"] if w else None,
             "weather_code": w["weather_code"] if w else None,
             "wind_speed_kmh": w["wind_speed_kmh"] if w else None,
-            "poll_id": env["poll_id"], "replay": bool(env.get("replay", False)), "replayed_at": replayed_at,
+            "poll_id": env.poll_id, "replay": env.replay, "replayed_at": env.replayed_at,
             "kafka_topic": rec.topic, "kafka_partition": rec.partition, "kafka_offset": rec.offset,
             "kafka_timestamp": _ts(rec.timestamp_ms), "batch_id": batch_id, "processed_at": processed_at,
         })
@@ -260,9 +258,9 @@ def _choose_as_of(parsed: Parsed, records: List[Record], processed_at: datetime)
     """Event-time horizon of the batch. Status observations define it: weather and poll_log sit on
     their own partitions and can be ahead of the status partitions during catch-up or replay."""
     if parsed.status:
-        return max(f for _r, _e, f in parsed.status)
+        return max(e.fetched_at for _r, e in parsed.status)
     if parsed.weather:
-        return max(f for _r, _e, f in parsed.weather)
+        return max(e.fetched_at for _r, e in parsed.weather)
     if parsed.raw_rows:
         return max(r["fetched_at"] for r in parsed.raw_rows)
     kafka_ms = [r.timestamp_ms for r in records if r.timestamp_ms]
@@ -277,8 +275,8 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
     parsed = parse_records(records, batch_id, processed_at, cfg)
 
     as_of = _choose_as_of(parsed, records, processed_at)
-    status_times = [f for _r, _e, f in parsed.status]
-    all_times = status_times + [f for _r, _e, f in parsed.weather] + [as_of]
+    status_times = [e.fetched_at for _r, e in parsed.status]
+    all_times = status_times + [e.fetched_at for _r, e in parsed.weather] + [as_of]
     ctx_end = min(status_times) if status_times else as_of
     prior = lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
                                             STATUS_CONTEXT_COLS, exclude_batch=batch_id) if parsed.status else None

@@ -1,12 +1,8 @@
-"""Envelope and payload validation. Every rule returns reason codes; nothing is silently dropped."""
+"""Payload validation; the envelope itself is checked by the contract's decode. Every rule returns reason
+codes; nothing is silently dropped."""
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List, Optional, Tuple
-
-from citibike_contract import KNOWN_EVENT_TYPES, SCHEMA_VERSION
-
-from .timeutil import parse_iso
+from typing import Any, Dict, List
 
 BOOL_LIKE = (0, 1, True, False)
 
@@ -17,31 +13,6 @@ def _is_int(x: Any) -> bool:
 
 def _is_num(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
-
-
-def parse_envelope(value: Optional[bytes]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    if not value:
-        return None, ["empty_value"]
-    try:
-        env = json.loads(value.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None, ["invalid_json"]
-    if not isinstance(env, dict):
-        return None, ["not_object"]
-    errors: List[str] = []
-    if env.get("schema_version") != SCHEMA_VERSION:
-        errors.append("bad_schema_version")
-    if env.get("event_type") not in KNOWN_EVENT_TYPES:
-        errors.append("unknown_event_type")
-    if not isinstance(env.get("payload"), dict):
-        errors.append("missing_payload")
-    if not env.get("poll_id"):
-        errors.append("missing_poll_id")
-    try:
-        parse_iso(env["fetched_at"])
-    except (KeyError, TypeError, ValueError):
-        errors.append("bad_fetched_at")
-    return (env if not errors else None), errors
 
 
 def validate_status_payload(p: Dict[str, Any], fetched_s: float, future_skew_s: int) -> List[str]:
