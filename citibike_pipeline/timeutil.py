@@ -14,9 +14,5 @@ def epoch(dt: datetime) -> float:
     return dt.timestamp()
 
 
-def partition_path(prefix: str, dt: datetime) -> str:
-    return "%s/dt=%s/hr=%02d" % (prefix, dt.strftime("%Y-%m-%d"), dt.hour)
-
-
 def floor_5min(dt: datetime) -> datetime:
     return dt.replace(minute=dt.minute - dt.minute % 5, second=0, microsecond=0)

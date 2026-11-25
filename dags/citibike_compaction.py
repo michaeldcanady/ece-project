@@ -15,10 +15,9 @@ from airflow.decorators import dag, task
 def citibike_compaction():
     @task
     def compact():
-        from citibike_pipeline import runtime
-        from citibike_pipeline.compaction import compact_due
+        from citibike_pipeline import lake, runtime
         _, storage = runtime.build()
-        return compact_due(storage)
+        return lake.compact_due(storage)
 
     compact()
 

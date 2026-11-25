@@ -1,4 +1,5 @@
 """End to end over an in-memory broker: synthetic capture -> plan/process/metrics/finalize -> lake."""
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -6,7 +7,6 @@ from fakes import load_capture
 
 from citibike_contract import parse_iso
 from citibike_pipeline import batch, lake
-from citibike_pipeline.compaction import compact_due, compact_partition
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import KafkaBatchReader
 from citibike_pipeline.quality import daily_quality
@@ -55,7 +55,7 @@ def drain(reader, storage, cfg, max_batches=50):
 
 
 def curated_rows(storage):
-    keys = [k for k in storage.list(lake.CURATED_STATUS + "/") if k.endswith(".parquet")]
+    keys = [k for k in storage.list(lake.CURATED_STATUS.prefix + "/") if k.endswith(".parquet")]
     rows = []
     for k in keys:
         rows.extend(read_parquet(storage, k).to_pylist())
@@ -103,7 +103,7 @@ def test_next_run_after_a_failed_run_reuses_its_plan_and_leaves_no_duplicates(tm
     s1 = batch.process_batch(p1, reader, storage, cfg)
     entry = batch.finalize_batch(p1, s1, batch.compute_metrics(p1, s1, storage, cfg), reader, storage, cfg)
     assert entry["run_id"] == "run_1"
-    for prefix in (lake.CURATED_STATUS, "raw/station_status", lake.DLQ):      # one row per Kafka offset
+    for prefix in (lake.CURATED_STATUS.prefix, lake.RAW_STATUS.prefix, lake.DLQ):      # one row per Kafka offset
         rows, distinct = _rows_by_offset(storage, prefix)
         assert rows == distinct > 0, prefix
     gold_batches = {r["batch_id"] for k in storage.list(lake.GOLD_WINDOW + "/")
@@ -265,77 +265,98 @@ def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
     assert len(read_parquet(storage, lake.DIM_STATION_CURRENT).to_pylist()) == 40   # not overwritten
 
 
+HOUR = START                       # 12:00, an hour several batches write into
+CURATED = lake.CURATED_STATUS
+
+
+def batches_in_hour(storage, table=CURATED, hour=HOUR):
+    t = table.read_window(storage, hour, hour + timedelta(hours=1), ["batch_id"])
+    return sorted(set(t["batch_id"].to_pylist()))
+
+
 def test_compaction_is_lossless_idempotent_and_verified(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
-    before = curated_rows(storage)
-    prefix, dt, hr = lake.CURATED_STATUS, "2026-10-20", 12
-    n_files = len([k for k in storage.list("%s/dt=%s/hr=%d/" % (prefix, dt, hr))])
-    res = compact_partition(storage, prefix, dt, hr, ["fetched_at", "kafka_partition", "kafka_offset"])
-    assert res["sources"] == n_files > 1
-    keys = storage.list("%s/dt=%s/hr=%d/" % (prefix, dt, hr))
-    assert keys == ["%s/dt=%s/hr=%d/compacted.parquet" % (prefix, dt, hr)]
-    after = curated_rows(storage)
-    assert len(after) == len(before)
-    assert compact_partition(storage, prefix, dt, hr, ["fetched_at"])["sources"] == 0      # idempotent
-    # window reads see the compacted file exactly once
-    t = lake.load_window(storage, prefix, START, START + timedelta(hours=1),
-                         lake.IDENTITY + ["fetched_at"])
-    assert t.num_rows == len(before)
-
-
-SORT = ["fetched_at", "kafka_partition", "kafka_offset"]
-HOUR = (lake.CURATED_STATUS, "2026-10-20", 12)
+    on_disk = len(curated_rows(storage))
+    before = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
+    n_batches = len(batches_in_hour(storage))
+    res = CURATED.compact_hour(storage, HOUR)
+    assert res == {"sources": n_batches, "rows": before.num_rows} and n_batches > 1
+    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0                       # idempotent
+    after = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
+    assert sorted(after.to_pylist(), key=str) == sorted(before.to_pylist(), key=str)
+    assert len(curated_rows(storage)) == on_disk                                      # nothing lost on disk
 
 
 class CompactsMidRead(LocalStorage):
-    """Compacts HOUR the first time a reader fetches one of its minute files, then serves the
-    (now deleted) file: the worst-case interleaving of load_window and compaction."""
+    """Compacts HOUR the first time a reader fetches one of its files, then serves the (now deleted)
+    file: the worst-case interleaving of a window read and compaction."""
 
     def __init__(self, root):
         super().__init__(root)
         self.armed = False
 
     def get(self, key):
-        if self.armed and key.startswith("%s/dt=%s/hr=%d/" % HOUR) and not key.endswith(lake.COMPACTED_NAME):
+        if self.armed and key.startswith(lake.partition_path(CURATED.prefix, HOUR) + "/"):
             self.armed = False
-            compact_partition(self, *HOUR, SORT)
+            CURATED.compact_hour(self, HOUR)
         return super().get(key)
 
 
-def test_load_window_is_lossless_when_compaction_runs_mid_read(tmp_path, capture):
+def test_read_window_is_lossless_when_compaction_runs_mid_read(tmp_path, capture):
     cfg, _storage, consumer, reader = make_env(tmp_path, capture)
     storage = CompactsMidRead(str(tmp_path))
     drain(reader, storage, cfg)
-    cols = lake.IDENTITY + ["fetched_at"]
-    expected = lake.load_window(storage, lake.CURATED_STATUS, START, START + timedelta(hours=1), cols)
+    cols = ["station_id", "fetched_at", "kafka_offset"]
+    expected = CURATED.read_window(storage, START, START + timedelta(hours=1), cols)
     storage.armed = True
-    got = lake.load_window(storage, lake.CURATED_STATUS, START, START + timedelta(hours=1), cols)
+    got = CURATED.read_window(storage, START, START + timedelta(hours=1), cols)
     assert not storage.armed                                            # compaction really ran mid-read
-    assert storage.list("%s/dt=%s/hr=%d/" % HOUR) == ["%s/dt=%s/hr=%d/compacted.parquet" % HOUR]
+    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0          # ... and finished
     assert sorted(got.to_pylist(), key=str) == sorted(expected.to_pylist(), key=str)
 
 
-def test_load_window_raises_when_a_file_keeps_vanishing(tmp_path):
+def test_read_window_raises_when_a_file_keeps_vanishing(tmp_path):
     class Ghost(LocalStorage):
         def list(self, prefix):
             return [prefix + "ghost.parquet"]
 
     with pytest.raises(FileNotFoundError):
-        lake.load_window(Ghost(str(tmp_path)), lake.CURATED_STATUS, START, START + timedelta(minutes=5),
-                         lake.IDENTITY + ["fetched_at"])
+        CURATED.read_window(Ghost(str(tmp_path)), START, START + timedelta(minutes=5))
 
 
-def test_read_batch_file_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
+def test_read_window_returns_only_the_requested_columns_typed_even_when_empty(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    assert len(drain(reader, storage, cfg)) > 1                          # several batches share the hour
+    empty = CURATED.read_window(storage, START, START + timedelta(hours=1), ["station_id", "fetched_at"])
+    assert empty.num_rows == 0 and empty.schema.names == ["station_id", "fetched_at"]
+    assert empty.schema.field("fetched_at").type == CURATED.schema.field("fetched_at").type
+    drain(reader, storage, cfg)
+    t = CURATED.read_window(storage, START, START + timedelta(hours=1), ["station_id"])
+    assert t.num_rows > 0 and t.schema.names == ["station_id"]
+
+
+def test_read_window_excludes_a_batch_also_inside_compacted_files(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    drain(reader, storage, cfg)
+    window = (HOUR, HOUR + timedelta(hours=1))
+    victim = batches_in_hour(storage)[0]
+    others = CURATED.read_window(storage, *window, ["batch_id"], exclude_batch=victim)
+    assert others.num_rows > 0 and victim not in set(others["batch_id"].to_pylist())
+    CURATED.compact_hour(storage, HOUR)
+    after = CURATED.read_window(storage, *window, ["batch_id"], exclude_batch=victim)
+    assert sorted(after["batch_id"].to_pylist()) == sorted(others["batch_id"].to_pylist())
+
+
+def test_read_batch_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    assert len(drain(reader, storage, cfg)) > 1
     cols = ["kafka_partition", "kafka_offset", "fetched_at"]
-    before = {k: read_parquet(storage, k, columns=cols).to_pylist()
-              for k in storage.list("%s/dt=%s/hr=%d/" % HOUR)}
-    compact_partition(storage, *HOUR, SORT)
-    for key, rows in before.items():
-        batch_id = key.rsplit("/", 1)[1][:-len(".parquet")]
-        assert lake.read_batch_file(storage, key, batch_id, cols).to_pylist() == rows, key
+    ids = batches_in_hour(storage)
+    assert len(ids) > 1                                                  # several batches share the hour
+    before = {b: CURATED.read_batch(storage, b, [HOUR], cols).to_pylist() for b in ids}
+    CURATED.compact_hour(storage, HOUR)
+    for b, rows in before.items():
+        assert rows and CURATED.read_batch(storage, b, [HOUR], cols).to_pylist() == rows, b
 
 
 def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, capture):
@@ -343,27 +364,69 @@ def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, cap
     plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
     publish = batch.compute_metrics(plan, stats, storage, cfg, now=START + timedelta(minutes=MINUTES))
     direct = sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"])))
-    compact_due(storage, now=START + timedelta(hours=4))                # e.g. a replay into old hours
-    assert not any(storage.exists(k) for k in stats["status_keys"])
+    assert direct
+    assert lake.compact_due(storage, now=START + timedelta(hours=4))     # e.g. a replay into old hours
     entry = batch.finalize_batch(plan, stats, publish, reader, storage, cfg, now=START + timedelta(minutes=MINUTES))
     assert sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"]))) == direct
     assert entry["latency_p50_s"] is not None
 
 
+def test_finalize_accepts_stats_from_before_status_hours(tmp_path, capture):
+    # A run in flight across the deploy carries the old stats shape: file keys instead of hours.
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
+    published_at = START + timedelta(minutes=MINUTES)
+    direct = sorted(batch.batch_latencies(storage, plan, stats, published_at))
+    legacy = {k: v for k, v in stats.items() if k != "status_hours"}
+    legacy["status_keys"] = ["%s/%s.parquet" % (lake.partition_path(CURATED.prefix, parse_iso(h)), plan["batch_id"])
+                             for h in stats["status_hours"]]
+    assert direct and sorted(batch.batch_latencies(storage, plan, legacy, published_at)) == direct
+
+
+def test_retry_after_compaction_does_not_read_its_own_rows_as_prior_context(tmp_path, capture):
+    # A batch whose hour is compacted before it is retried (replay or catch-up into hours older than
+    # the compaction lag): the retry must not see its own first attempt inside compacted.parquet.
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    plan, first = run_batch(0, reader, storage, cfg, fail_before_commit=True)
+    assert lake.compact_due(storage, now=START + timedelta(hours=4))
+    retry = batch.process_batch(plan, reader, storage, cfg, now=START + timedelta(minutes=MINUTES, seconds=5))
+    for k in ("repeats", "out_of_order", "status_rows"):
+        assert retry[k] == first[k], k
+
+
+LAYOUT = r"^%s/dt=\d{4}-\d{2}-\d{2}/hr=\d{2}/%s$"
+
+
+def test_lake_table_on_disk_layout(tmp_path, capture):
+    # Pins the key format that existing local and S3 lakes (and anything reading them) depend on.
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    drain(reader, storage, cfg)
+    tables = ["raw/station_status", "raw/weather", "raw/poll_log", "curated/station_status", "curated/weather"]
+    assert [t.prefix for t in lake.LAKE_TABLES] == tables
+    for prefix in tables:
+        keys = storage.list(prefix + "/")
+        assert keys, prefix
+        assert all(re.match(LAYOUT % (prefix, r"b[0-9a-f]{12}\.parquet"), k) for k in keys), keys
+    lake.compact_due(storage, now=START + timedelta(hours=4))
+    for prefix in tables:
+        keys = storage.list(prefix + "/")
+        assert keys and all(re.match(LAYOUT % (prefix, r"compacted\.parquet"), k) for k in keys), keys
+
+
 def test_compact_due_respects_lag(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
-    assert compact_due(storage, now=START + timedelta(hours=1, minutes=30)) == {}       # hour ended < 2 h ago
-    done = compact_due(storage, now=START + timedelta(hours=4))
-    assert any(k.startswith(lake.CURATED_STATUS) for k in done)
-    assert compact_due(storage, now=START + timedelta(hours=4)) == {}                   # second run: nothing left
+    assert lake.compact_due(storage, now=START + timedelta(hours=1, minutes=30)) == {}       # hour ended < 2 h ago
+    done = lake.compact_due(storage, now=START + timedelta(hours=4))
+    assert any(k.startswith(CURATED.prefix) for k in done)
+    assert lake.compact_due(storage, now=START + timedelta(hours=4)) == {}                   # second run: nothing left
 
 
 def test_daily_quality_report(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     build_dim_station(reader, storage, cfg)
     drain(reader, storage, cfg)
-    compact_due(storage, now=START + timedelta(hours=4))
+    lake.compact_due(storage, now=START + timedelta(hours=4))
     rep = daily_quality(storage, cfg, START.date())
     poll = rep["polls"]["station_status"]
     assert poll["polls_logged"] == MINUTES and poll["gaps_over_threshold"] == 0

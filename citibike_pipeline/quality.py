@@ -14,12 +14,12 @@ from . import lake
 from .config import PipelineConfig
 from .metrics import pct
 from .storage import Storage, put_json, read_parquet
-from .timeutil import epoch, from_epoch, iso, partition_path
+from .timeutil import epoch, from_epoch, iso
 
 log = logging.getLogger(__name__)
 
 AGE_EDGES_S = [60, 300, 900, 1800, 3600, 7200, 21600]     # for the stale-threshold distribution
-STATUS_COLS = lake.IDENTITY + ["station_id", "fetched_at", "age_s", "is_stale", "is_repeat", "is_out_of_order",
+STATUS_COLS = ["station_id", "fetched_at", "age_s", "is_stale", "is_repeat", "is_out_of_order",
                                "is_unknown_station", "num_bikes_available", "is_installed", "is_renting",
                                "is_returning"]
 
@@ -30,7 +30,7 @@ def _day_bounds(day: date):
 
 
 def _poll_log_section(storage: Storage, cfg: PipelineConfig, start: datetime, end: datetime) -> Dict[str, Any]:
-    t = lake.load_window(storage, "raw/poll_log", start, end, lake.IDENTITY + ["fetched_at", "payload_json"])
+    t = lake.RAW_POLL_LOG.read_window(storage, start, end, ["fetched_at", "payload_json"])
     by_job: Dict[str, List[Dict[str, Any]]] = {}
     for fetched, payload in zip(t["fetched_at"].to_pylist(), t["payload_json"].to_pylist()):
         p = json.loads(payload)
@@ -69,7 +69,7 @@ def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
     obs_by_hour: Counter = Counter()
     for h in range(24):
         hs = start + timedelta(hours=h)
-        t = lake.load_window(storage, lake.CURATED_STATUS, hs, hs + timedelta(hours=1), STATUS_COLS)
+        t = lake.CURATED_STATUS.read_window(storage, hs, hs + timedelta(hours=1), STATUS_COLS)
         if t.num_rows == 0:
             continue
         rows += t.num_rows
@@ -106,7 +106,7 @@ def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
 def _batch_section(storage: Storage, start: datetime) -> Dict[str, Any]:
     rows: List[Dict[str, Any]] = []
     for h in range(24):
-        for key in storage.list(partition_path(lake.BATCH_LOG, start + timedelta(hours=h)) + "/"):
+        for key in storage.list(lake.partition_path(lake.BATCH_LOG, start + timedelta(hours=h)) + "/"):
             if key.endswith(".parquet"):
                 rows.extend(read_parquet(storage, key).to_pylist())
     if not rows:
@@ -125,7 +125,7 @@ def _batch_section(storage: Storage, start: datetime) -> Dict[str, Any]:
 def _dlq_section(storage: Storage, start: datetime) -> Dict[str, Any]:
     reasons: Counter = Counter()
     for h in range(24):
-        for key in storage.list(partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
+        for key in storage.list(lake.partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
             if key.endswith(".parquet"):
                 reasons.update(read_parquet(storage, key, columns=["reason"])["reason"].to_pylist())
     return {"total": sum(reasons.values()), "by_reason": dict(reasons.most_common())}

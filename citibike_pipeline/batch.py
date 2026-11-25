@@ -38,10 +38,7 @@ from .schemas import (
     BATCH_LOG,
     CURRENT_STATE,
     DLQ,
-    RAW,
-    STATUS,
     SYSTEM_AVAILABILITY,
-    WEATHER,
     WINDOW_15M,
     to_table,
 )
@@ -56,12 +53,9 @@ from .validation import (
 
 log = logging.getLogger(__name__)
 
-RAW_PREFIX_BY_EVENT = {"station_status": "raw/station_status", "weather_current": "raw/weather",
-                       "poll_log": "raw/poll_log"}
-
-STATUS_CONTEXT_COLS = lake.IDENTITY + ["station_id", "fetched_at", "last_reported"]
-WEATHER_CONTEXT_COLS = lake.IDENTITY + ["obs_time", "fetched_at", "temperature_c", "precipitation_mm",
-                                        "weather_code", "wind_speed_kmh"]
+STATUS_CONTEXT_COLS = ["station_id", "fetched_at", "last_reported"]
+WEATHER_CONTEXT_COLS = ["obs_time", "fetched_at", "temperature_c", "precipitation_mm", "weather_code",
+                        "wind_speed_kmh"]
 
 
 def safe_id(run_id: str) -> str:
@@ -275,21 +269,6 @@ def _choose_as_of(parsed: Parsed, records: List[Record], processed_at: datetime)
     return from_epoch(max(kafka_ms) / 1000.0) if kafka_ms else processed_at
 
 
-def write_by_hour(storage: Storage, prefix: str, rows: List[Dict[str, Any]], schema: pa.Schema, name: str,
-                  time_field: str) -> List[str]:
-    """One file per event-time hour, so hour partitions always contain the rows whose time falls in them."""
-    groups: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
-    for r in rows:
-        t = r[time_field]
-        groups[(t.strftime("%Y-%m-%d"), t.hour)].append(r)
-    keys = []
-    for (dt, hr), rs in sorted(groups.items()):
-        key = "%s/dt=%s/hr=%02d/%s" % (prefix, dt, hr, name)
-        put_parquet(storage, key, to_table(rs, schema))
-        keys.append(key)
-    return keys
-
-
 def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                   now: Optional[datetime] = None) -> Dict[str, Any]:
     batch_id = plan["batch_id"]
@@ -301,13 +280,13 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
     status_times = [f for _r, _e, f in parsed.status]
     all_times = status_times + [f for _r, _e, f in parsed.weather] + [as_of]
     ctx_end = min(status_times) if status_times else as_of
-    prior = lake.load_window(storage, lake.CURATED_STATUS, ctx_end - timedelta(minutes=cfg.context_minutes),
-                             ctx_end, STATUS_CONTEXT_COLS, exclude_batch=batch_id) if parsed.status else None
+    prior = lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
+                                            STATUS_CONTEXT_COLS, exclude_batch=batch_id) if parsed.status else None
     # Weather from earlier batches can be newer than this batch's first status row (partitions drain at
     # different speeds), so read it up to the newest time seen here.
-    prior_weather_t = lake.load_window(storage, lake.CURATED_WEATHER, ctx_end - timedelta(hours=3),
-                                       max(all_times) + timedelta(milliseconds=1), WEATHER_CONTEXT_COLS,
-                                       exclude_batch=batch_id, time_col="fetched_at")
+    prior_weather_t = lake.CURATED_WEATHER.read_window(storage, ctx_end - timedelta(hours=3),
+                                                       max(all_times) + timedelta(milliseconds=1),
+                                                       WEATHER_CONTEXT_COLS, exclude_batch=batch_id)
     weather_rows = _weather_rows(parsed.weather, batch_id, processed_at)
     weather_obs = prior_weather_t.to_pylist() + weather_rows
 
@@ -318,19 +297,18 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
     by_event: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in parsed.raw_rows:
         by_event[r["event_type"]].append(r)
-    name = "%s.parquet" % batch_id
     for et, rows in by_event.items():
-        write_by_hour(storage, RAW_PREFIX_BY_EVENT[et], rows, RAW, name, "fetched_at")
-    status_keys = write_by_hour(storage, lake.CURATED_STATUS, status_rows, STATUS, name, "fetched_at")
-    write_by_hour(storage, lake.CURATED_WEATHER, weather_rows, WEATHER, name, "fetched_at")
+        lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, rows)
+    status_hours = lake.CURATED_STATUS.write(storage, batch_id, status_rows)
+    lake.CURATED_WEATHER.write(storage, batch_id, weather_rows)
     if parsed.dlq_rows:
-        put_parquet(storage, lake.part_key(lake.DLQ, as_of, name), to_table(parsed.dlq_rows, DLQ))
+        put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id), to_table(parsed.dlq_rows, DLQ))
 
     stats.update({
         "batch_id": batch_id, "as_of": iso(as_of), "records_read": len(records),
         "raw_rows": len(parsed.raw_rows), "status_rows": len(status_rows),
         "weather_rows": len(weather_rows), "dlq_rows": len(parsed.dlq_rows),
-        "status_keys": status_keys,
+        "status_hours": [iso(h) for h in status_hours],
     })
     log.info("batch %s: read=%d raw=%d status=%d weather=%d dlq=%d as_of=%s", batch_id, len(records),
              len(parsed.raw_rows), len(status_rows), len(weather_rows), len(parsed.dlq_rows), stats["as_of"])
@@ -341,7 +319,8 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
 # metrics + serving files
 # ---------------------------------------------------------------------------------------------
 
-METRIC_COLS = lake.IDENTITY + [
+METRIC_COLS = [
+    "kafka_partition", "kafka_offset",                 # tie-breakers for the observation order
     "station_id", "fetched_at", "last_reported", "num_bikes_available", "num_ebikes_available",
     "num_docks_available", "is_installed", "is_renting", "is_returning", "station_name", "lat", "lon",
     "capacity", "temperature_c", "precipitation_mm",
@@ -361,7 +340,7 @@ def compute_metrics(plan: Dict[str, Any], stats: Dict[str, Any], storage: Storag
         if prev and prev[0] > as_of:
             as_of = prev[0]
     start = as_of - timedelta(minutes=cfg.context_minutes)
-    table = lake.load_window(storage, lake.CURATED_STATUS, start, as_of + timedelta(milliseconds=1), METRIC_COLS)
+    table = lake.CURATED_STATUS.read_window(storage, start, as_of + timedelta(milliseconds=1), METRIC_COLS)
     cols = {c: table[c].to_pylist() for c in table.column_names}
     n = table.num_rows
 
@@ -448,12 +427,13 @@ def batch_latencies(storage: Storage, plan: Dict[str, Any], stats: Dict[str, Any
     """Seconds from observation (or replay time) to the moment the serving files were written."""
     if published_at is None or not stats.get("status_rows"):
         return []
-    out = []
-    for key in stats.get("status_keys", []):
-        t = lake.read_batch_file(storage, key, plan["batch_id"], ["fetched_at", "replayed_at"])
-        for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist()):
-            out.append(max((published_at - (r or f)).total_seconds(), 0.0))
-    return out
+    if "status_hours" in stats:
+        hours = [parse_iso(h) for h in stats["status_hours"]]
+    else:                                   # stats from a run started before the deploy that added hours
+        hours = lake.hours_from_legacy_keys(stats.get("status_keys", []))
+    t = lake.CURATED_STATUS.read_batch(storage, plan["batch_id"], hours, ["fetched_at", "replayed_at"])
+    return [max((published_at - (r or f)).total_seconds(), 0.0)
+            for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist())]
 
 
 def finalize_batch(plan: Dict[str, Any], stats: Dict[str, Any], publish: Dict[str, Any],
