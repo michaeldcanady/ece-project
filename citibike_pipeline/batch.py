@@ -23,6 +23,7 @@ import pyarrow as pa
 from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, decode
 
 from . import lake
+from .batch_log import BatchLog, BatchLogEntry
 from .config import DATA_TOPICS, PipelineConfig
 from .kafka_io import (
     KafkaBatchReader,
@@ -36,7 +37,6 @@ from .kafka_io import (
 )
 from .metrics import Obs, pct, station_state, window_metrics
 from .schemas import (
-    BATCH_LOG,
     CURRENT_STATE,
     DLQ,
     SYSTEM_AVAILABILITY,
@@ -530,35 +530,23 @@ def finalize_batch(plan: Plan, stats: Stats, published: Published,
     lat = sorted(batch_latencies(storage, plan, stats, published_at))
     finished = now or utcnow()
     as_of = stats.as_of
-    entry = {
-        "batch_id": plan.batch_id, "run_id": plan.run_id, "as_of": as_of,
-        "planned_at": plan.planned_at, "published_at": published_at, "finished_at": finished,
-        "records_read": stats.records_read, "raw_rows": stats.raw_rows, "status_rows": stats.status_rows,
-        "weather_rows": stats.weather_rows, "dlq_rows": stats.dlq_rows,
-        "duplicates_dropped": stats.duplicates_dropped, "repeats": stats.repeats,
-        "out_of_order": stats.out_of_order, "stale": stats.stale,
-        "unknown_station": stats.unknown_station, "replay_rows": stats.replay_rows,
-        "latency_p50_s": pct(lat, 0.50), "latency_p95_s": pct(lat, 0.95),
-        "latency_max_s": lat[-1] if lat else None, "status": "success",
-    }
-    # per-batch record (authoritative history) keyed by batch_id: retries overwrite
-    put_parquet(storage, lake.part_key(lake.BATCH_LOG, as_of, "%s.parquet" % plan.batch_id),
-                to_table([entry], BATCH_LOG))
-    # rolling table for the health panel: dedupe by batch_id, keep the last 24 h
-    recent: List[Dict[str, Any]] = []
-    if storage.exists(lake.SERVING_BATCH_LOG):
-        recent = [r for r in read_parquet(storage, lake.SERVING_BATCH_LOG).to_pylist()
-                  if r["batch_id"] != entry["batch_id"]]
-    recent.append(entry)
-    cutoff = as_of - timedelta(hours=24)
-    recent = sorted((r for r in recent if r["as_of"] >= cutoff), key=lambda r: r["as_of"])
-    put_parquet(storage, lake.SERVING_BATCH_LOG, to_table(recent, BATCH_LOG))
+    entry = BatchLogEntry(
+        batch_id=plan.batch_id, run_id=plan.run_id, as_of=as_of,
+        planned_at=plan.planned_at, published_at=published_at, finished_at=finished,
+        records_read=stats.records_read, raw_rows=stats.raw_rows, status_rows=stats.status_rows,
+        weather_rows=stats.weather_rows, dlq_rows=stats.dlq_rows,
+        duplicates_dropped=stats.duplicates_dropped, repeats=stats.repeats,
+        out_of_order=stats.out_of_order, stale=stats.stale,
+        unknown_station=stats.unknown_station, replay_rows=stats.replay_rows,
+        latency_p50_s=pct(lat, 0.50), latency_p95_s=pct(lat, 0.95),
+        latency_max_s=lat[-1] if lat else None, status="success")
+    BatchLog(storage).record(entry)
 
     reader.commit(plan.ranges)          # last: only after every output exists
     if storage.exists(PENDING_PLAN) and get_json(storage, PENDING_PLAN)["batch_id"] == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
-    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, entry["latency_p50_s"],
-             entry["latency_p95_s"])
+    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, entry.latency_p50_s,
+             entry.latency_p95_s)
 
 
 # ---------------------------------------------------------------------------------------------

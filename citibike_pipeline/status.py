@@ -6,6 +6,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from . import lake
+from .batch_log import BatchLog
 from .config import PipelineConfig
 from .metrics import pct
 from .storage import Storage, read_parquet, storage_from_config
@@ -14,19 +15,19 @@ from .timeutil import utcnow
 
 def summarize(storage: Storage, max_age_min: float) -> Dict[str, Any]:
     out: Dict[str, Any] = {"ok": False}
-    if not storage.exists(lake.SERVING_BATCH_LOG) or not storage.exists(lake.SERVING_SUMMARY):
+    batches = BatchLog(storage).recent()
+    if not batches or not storage.exists(lake.SERVING_SUMMARY):
         out["problem"] = "no serving files yet (is the micro-batch DAG running?)"
         return out
-    batches = read_parquet(storage, lake.SERVING_BATCH_LOG).to_pylist()
-    last = max(batches, key=lambda r: r["finished_at"])
-    age_min = (utcnow() - last["finished_at"]).total_seconds() / 60.0
+    last = max(batches, key=lambda r: r.finished_at)
+    age_min = (utcnow() - last.finished_at).total_seconds() / 60.0
     s = read_parquet(storage, lake.SERVING_SUMMARY).to_pylist()[0]
-    p50 = [r["latency_p50_s"] for r in batches[-60:] if r["latency_p50_s"] is not None]
+    p50 = [r.latency_p50_s for r in batches[-60:] if r.latency_p50_s is not None]
     out.update({
         "last_batch_finished_min_ago": round(age_min, 1), "data_as_of": s["as_of"].isoformat(),
         "stations": s["n_stations"], "share_empty": s["share_empty"], "share_full": s["share_full"],
         "share_stale": s["share_stale"], "at_risk_empty": s["n_at_risk_empty"], "at_risk_full": s["n_at_risk_full"],
-        "batches_last_24h": len(batches), "dlq_rows_last_24h": sum(r["dlq_rows"] for r in batches),
+        "batches_last_24h": len(batches), "dlq_rows_last_24h": sum(r.dlq_rows for r in batches),
         "latency_p50_s_median_last_hour": pct(sorted(p50), 0.5),
     })
     out["ok"] = age_min <= max_age_min

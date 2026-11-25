@@ -8,6 +8,7 @@ from fakes import load_capture
 
 from citibike_contract import TOPIC_STATUS, Envelope, encode, parse_iso
 from citibike_pipeline import batch, lake
+from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import KafkaBatchReader
 from citibike_pipeline.quality import daily_quality
@@ -61,7 +62,7 @@ def drain(reader, storage, cfg, max_batches=50):
 
 
 def batch_log_rows(storage):
-    return read_parquet(storage, lake.SERVING_BATCH_LOG).to_pylist()
+    return BatchLog(storage).recent()
 
 
 def curated_rows(storage):
@@ -107,7 +108,7 @@ def test_next_run_after_a_failed_run_reuses_its_plan_and_leaves_no_duplicates(tm
         consumer.log[tp] += rest
     p1, s1 = run_batch(1, reader, storage, cfg)                             # the driver takes the plan over
     assert (p1.batch_id, p1.ranges, p1.first_run_id, p1.run_id) == (p0.batch_id, p0.ranges, "run_0", "run_1")
-    assert s1 is not None and [r["run_id"] for r in batch_log_rows(storage)] == ["run_1"]
+    assert s1 is not None and [r.run_id for r in batch_log_rows(storage)] == ["run_1"]
     for prefix in (lake.CURATED_STATUS.prefix, lake.RAW_STATUS.prefix, lake.DLQ):      # one row per Kafka offset
         rows, distinct = _rows_by_offset(storage, prefix)
         assert rows == distinct > 0, prefix
@@ -277,11 +278,11 @@ def test_batch_log_holds_measured_values_not_constants(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     batches = drain(reader, storage, cfg)
     recent = batch_log_rows(storage)
-    entries = [e for e in recent if e["status_rows"]]
-    p50s = {e["latency_p50_s"] for e in entries}
-    assert len(p50s) > 1 and all(e["latency_p50_s"] >= 0 for e in entries)
-    assert all(e["latency_p95_s"] >= e["latency_p50_s"] for e in entries)
-    assert len({r["batch_id"] for r in recent}) == len(recent) == len(batches)
+    entries = [e for e in recent if e.status_rows]
+    p50s = {e.latency_p50_s for e in entries}
+    assert len(p50s) > 1 and all(e.latency_p50_s >= 0 for e in entries)
+    assert all(e.latency_p95_s >= e.latency_p50_s for e in entries)
+    assert len({r.batch_id for r in recent}) == len(recent) == len(batches)
 
 
 def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
@@ -418,7 +419,7 @@ def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, cap
     assert lake.compact_due(storage, now=START + timedelta(hours=4))     # e.g. a replay into old hours
     batch.finalize_batch(plan, stats, published, reader, storage, cfg, now=now_of(0))
     assert sorted(batch.batch_latencies(storage, plan, stats, published.published_at)) == direct
-    assert batch_log_rows(storage)[0]["latency_p50_s"] is not None
+    assert batch_log_rows(storage)[0].latency_p50_s is not None
 
 
 def test_retry_after_compaction_does_not_read_its_own_rows_as_prior_context(tmp_path, capture):

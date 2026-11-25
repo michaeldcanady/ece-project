@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from . import lake
+from .batch_log import BatchLog
 from .config import PipelineConfig
 from .metrics import pct
 from .storage import Storage, put_json, read_parquet
@@ -103,21 +104,17 @@ def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
 
 
 def _batch_section(storage: Storage, start: datetime) -> Dict[str, Any]:
-    rows: List[Dict[str, Any]] = []
-    for h in range(24):
-        for key in storage.list(lake.partition_path(lake.BATCH_LOG, start + timedelta(hours=h)) + "/"):
-            if key.endswith(".parquet"):
-                rows.extend(read_parquet(storage, key).to_pylist())
+    rows = BatchLog(storage).day(start.date())
     if not rows:
         return {"batches": 0}
-    p50 = sorted(r["latency_p50_s"] for r in rows if r["latency_p50_s"] is not None)
-    p95 = sorted(r["latency_p95_s"] for r in rows if r["latency_p95_s"] is not None)
+    p50 = sorted(r.latency_p50_s for r in rows if r.latency_p50_s is not None)
+    p95 = sorted(r.latency_p95_s for r in rows if r.latency_p95_s is not None)
     return {
-        "batches": len(rows), "records_read": sum(r["records_read"] for r in rows),
-        "dlq_rows": sum(r["dlq_rows"] for r in rows), "duplicates_dropped": sum(r["duplicates_dropped"] for r in rows),
-        "replay_rows": sum(r["replay_rows"] for r in rows),
+        "batches": len(rows), "records_read": sum(r.records_read for r in rows),
+        "dlq_rows": sum(r.dlq_rows for r in rows), "duplicates_dropped": sum(r.duplicates_dropped for r in rows),
+        "replay_rows": sum(r.replay_rows for r in rows),
         "latency_s": {"median_of_batch_p50": pct(p50, 0.5), "p95_of_batch_p95": pct(p95, 0.95),
-                      "max": max((r["latency_max_s"] for r in rows if r["latency_max_s"] is not None), default=None)},
+                      "max": max((r.latency_max_s for r in rows if r.latency_max_s is not None), default=None)},
     }
 
 

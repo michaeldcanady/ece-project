@@ -30,8 +30,6 @@ GOLD_AVAILABILITY = "gold/system_availability_5m"
 SERVING_CURRENT = "gold/serving/current_station_state.parquet"
 SERVING_AT_RISK = "gold/serving/at_risk.parquet"
 SERVING_SUMMARY = "gold/serving/system_summary.parquet"
-SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
-BATCH_LOG = "ops/batch_log"
 
 IDENTITY = ["kafka_topic", "kafka_partition", "kafka_offset"]
 _EVENT_TIME = "fetched_at"                                     # every lake table's event time
