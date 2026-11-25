@@ -71,7 +71,7 @@ run = "uv run pytest -v"
 
 [tasks.check]
 description = "Everything CI and the pre-commit hook run: lint, then tests"
-run = ["mise run lint", "uv run pytest -q"]
+run = ["mise run lint", "uv run pytest -q -rs"]
 
 [tasks."smoke:replay"]
 description = "Replay the committed sample through the running stack"

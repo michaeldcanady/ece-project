@@ -1,55 +1,45 @@
 # Architecture candidates (backlog)
 
-Deepening candidates from the architecture review of 2026-11-25. Candidate 1 (deepen the
-hour-partitioned lake table) is done on branch `refactor/lake-table`; these are queued for later, in the
-suggested order.
+Open deepening candidates from the architecture reviews of 2026-11-25. Done work lives in git history and
+`docs/specs/` (hour-partitioned lake table, envelope contract, `docs/specs/batch-interface.md`: typed Batch
+steps and the Batch log module). Vocabulary: `GLOSSARY.md` and the `codebase-design` skill.
 
-## 2. Move the envelope into the contract (worth exploring, in-process)
+## 1. Split `compute_metrics` into a pure snapshot and a publish (worth exploring, in-process)
 
-**Files:** `citibike_contract/__init__.py`, `citibike_producer/envelope.py` (`make_envelope`, `encode`),
-`citibike_producer/replay.py` (`env["replay"]`, `env["replayed_at"]`, `_key_for`),
-`citibike_pipeline/validation.py` (`parse_envelope`), `citibike_pipeline/batch.py` (`parse_records`,
-`build_status_rows`).
+**Files:** `citibike_pipeline/batch.py` (`compute_metrics`, ~100 lines), `citibike_pipeline/metrics.py`,
+`citibike_pipeline/lake.py` (`SERVING_*`), `citibike_pipeline/status.py`.
 
-**Problem:** the contract package pins down topics and timestamps but not the envelope. Its fields are
-written in `make_envelope`, extended in place by `replay` (`replay`, `replayed_at`), and read back with
-string keys across `batch.py` (about 12 `env.get(...)` calls, `parse_iso(env["replayed_at"])` twice).
-A renamed field fails silently as `None`.
+**Problem:** the serving-file rules (written last, after history; `as_of` never moves backwards) share one
+function with the metric calculation, so testing a metric needs a lake and Kafka-shaped batches. Readers
+(`status.py`, the dashboard) rebuild the serving file set from `lake.SERVING_*` keys.
 
-**Direction:** give `citibike_contract` one envelope module (stdlib only, so the producer image can
-still import it) that the producer and the pipeline both build, encode and decode through: building,
-marking as replayed, encoding, and decoding to an envelope or reason codes. The Kafka key per event
-type (`replay._key_for`) moves with it. Payload validation stays in the pipeline.
+**Direction:** a pure snapshot calculation over a status table, plus one publish/read module that owns the
+serving files.
 
-**Tests:** a producer→pipeline round-trip test at the contract interface; `batch.py` stops parsing
-timestamps.
+**Caveat:** the deletion test is weak for the serving module alone (one writer, one reader); the pure split
+carries most of the value.
 
-## 3. Give the micro-batch step records a real interface (worth exploring, in-process)
+## 2. Put the Poll log payload in the contract (worth exploring, in-process)
 
-**Files:** `citibike_pipeline/batch.py` (`plan_batch`, `process_batch`, `compute_metrics`,
-`finalize_batch`), `dags/citibike_micro_batch.py`, `tests/test_pipeline_e2e.py` (`run_batch`, `drain`).
+**Files:** `citibike_producer/jobs.py` (`Job._finish`), `citibike_pipeline/validation.py`
+(`validate_poll_log_payload`), `citibike_pipeline/quality.py` (`_poll_log_section`),
+`citibike_contract/envelope.py`.
 
-**Problem:** the plan, stats (14 keys) and publish outputs are the real interface between the steps,
-yet they are bare dicts that are serialised to XCom and re-read by key name. `finalize_batch` copies
-11 stats keys by name. Their order, the `has_data` gate (`plan["total_messages"]`) and the commit-last
-rule are written out twice, once in the DAG and once in the test helper `run_batch`.
+**Problem:** the Envelope is typed, but the Poll log payload it carries is a 15-key dict written in
+`_finish` (nine parameters) and read by string key in two pipeline modules. Outcomes are loose strings.
 
-**Direction:** keep one Airflow task per step so retries stay per step. The batch module would own
-typed step records (which serialise themselves for XCom) and a driver for the step order, which both
-the DAG and the tests use.
+**Direction:** a `PollLog` type in `citibike_contract` (stdlib only) with a `Literal` outcome, built by the jobs and
+decoded once on the pipeline side.
 
-**Tests:** crash-retry tests drive the same step order the DAG uses; a missing stats key fails loudly.
+**Tests:** a producer to pipeline round trip at the contract interface.
 
-## 4. Serving-snapshot module (speculative, local-substitutable)
+## 3. Parse the batch into typed observation rows once (speculative, in-process)
 
-**Files:** `citibike_pipeline/batch.py` (`compute_metrics`, `finalize_batch`),
-`citibike_pipeline/status.py` (`summarize`), `citibike_pipeline/lake.py` (`SERVING_*`).
+**Files:** `citibike_pipeline/batch.py` (`parse_records`, `build_status_rows`, `_weather_rows`),
+`citibike_pipeline/schemas.py`, `quality.py` (`STATUS_COLS`), `batch.py` (`METRIC_COLS`).
 
-**Problem:** the serving-file rules live inside two batch steps: they are written last (after
-history), `as_of` never moves backwards, and the batch log is a rolling 24 h table deduped by
-`batch_id`. Readers (`status.py`, the dashboard) rebuild the file set from `lake.SERVING_*` keys.
+**Problem:** every column name is spelled in the schema, the 40-key row dict and three column lists.
 
-**Direction:** move the serving files behind one publish/read module.
+**Direction:** one row class that derives the schema and the column lists.
 
-**Caveat:** the deletion test is weak (one writer, one reader). Revisit after candidate 1 lands; it
-may fall out of the lake-table work.
+**Caveat:** one writer per table, so the seam is hypothetical; a wide change for a modest gain.

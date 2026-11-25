@@ -4,3 +4,5 @@
   the strong-types check and the tests, the same as CI and the pre-commit hook.
 - **Types:** `Any` and `dict` are rejected by `mise run lint`; use the exact type or a dataclass.
 - **Reviewing** a change: apply `CODING_STANDARDS.md`.
+- **DAG tests** run against the sibling `airflow` container's REST API (`tests/dag_catalog.py`) when Airflow is
+  not installed; a skip names the reason (`-rs`). After editing a DAG file, wait ~30 s for the container to re-parse.
