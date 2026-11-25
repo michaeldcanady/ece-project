@@ -1,6 +1,6 @@
 """Every minute: consume exact Kafka offset ranges, validate/dedup/enrich, publish gold, then commit.
 
-plan_batch -> has_data -> process_batch -> compute_metrics -> finalize
+plan -> has_data -> process -> metrics -> finalize (batch.STEPS, the order batch.run_batch takes)
 Library code lives in citibike_pipeline (importable without Airflow). Imports are lazy so a
 broken dependency shows up as a task failure, not as a DAG import error that hides the DAG.
 """
@@ -24,31 +24,34 @@ def citibike_micro_batch():
         from citibike_pipeline import batch, runtime
         cfg, storage = runtime.build()
         with runtime.open_reader(cfg) as reader:
-            return batch.plan_batch(context["run_id"], reader, storage, cfg)
+            return batch.plan_batch(context["run_id"], reader, storage, cfg).to_json()
 
     @task.short_circuit
     def has_data(plan_out):
-        return plan_out["total_messages"] > 0
+        from citibike_pipeline import batch
+        return batch.Plan.from_json(plan_out).has_data
 
     @task
     def process(plan_out):
         from citibike_pipeline import batch, runtime
         cfg, storage = runtime.build()
         with runtime.open_reader(cfg) as reader:
-            return batch.process_batch(plan_out, reader, storage, cfg)
+            return batch.process_batch(batch.Plan.from_json(plan_out), reader, storage, cfg).to_json()
 
     @task
     def metrics(plan_out, stats):
         from citibike_pipeline import batch, runtime
         cfg, storage = runtime.build()
-        return batch.compute_metrics(plan_out, stats, storage, cfg)
+        return batch.compute_metrics(batch.Plan.from_json(plan_out), batch.Stats.from_json(stats),
+                                     storage, cfg).to_json()
 
     @task
     def finalize(plan_out, stats, publish):
         from citibike_pipeline import batch, runtime
         cfg, storage = runtime.build()
         with runtime.open_reader(cfg) as reader:
-            return batch.finalize_batch(plan_out, stats, publish, reader, storage, cfg)
+            batch.finalize_batch(batch.Plan.from_json(plan_out), batch.Stats.from_json(stats),
+                                 batch.Published.from_json(publish), reader, storage, cfg)
 
     p = plan()
     gate = has_data(p)

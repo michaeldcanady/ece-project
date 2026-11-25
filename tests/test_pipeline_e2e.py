@@ -32,27 +32,36 @@ def make_env(tmp_path, capture, cap=700):
     return cfg, LocalStorage(str(tmp_path)), consumer, KafkaBatchReader("x", "g", consumer=consumer)
 
 
-def run_batch(i, reader, storage, cfg, fail_before_commit=False):
-    now = START + timedelta(minutes=MINUTES, seconds=5 + i)
+def now_of(i):
+    return START + timedelta(minutes=MINUTES, seconds=5 + i)
+
+
+def run_batch(i, reader, storage, cfg):
+    """Run Airflow run `i` through the driver: (plan, stats), stats None when there was no data."""
+    return batch.run_batch("run_%d" % i, reader, storage, cfg, now=now_of(i))
+
+
+def crash_before_commit(i, reader, storage, cfg):
+    """Run the steps up to metrics and stop: outputs written, offsets not committed. (plan, stats, published)."""
+    now = now_of(i)
     plan = batch.plan_batch("run_%d" % i, reader, storage, cfg, now=now)
-    if plan["total_messages"] == 0:
-        return plan, None
     stats = batch.process_batch(plan, reader, storage, cfg, now=now)
-    publish = batch.compute_metrics(plan, stats, storage, cfg, now=now)
-    if fail_before_commit:
-        return plan, stats
-    return plan, batch.finalize_batch(plan, stats, publish, reader, storage, cfg, now=now)
+    return plan, stats, batch.compute_metrics(plan, stats, storage, cfg, now=now)
 
 
 def drain(reader, storage, cfg, max_batches=50):
-    n, plans = 0, []
+    n, results = 0, []
     while n < max_batches:
-        plan, entry = run_batch(n, reader, storage, cfg)
-        if entry is None:
+        plan, stats = run_batch(n, reader, storage, cfg)
+        if stats is None:
             break
-        plans.append((plan, entry))
+        results.append((plan, stats))
         n += 1
-    return plans
+    return results
+
+
+def batch_log_rows(storage):
+    return read_parquet(storage, lake.SERVING_BATCH_LOG).to_pylist()
 
 
 def curated_rows(storage):
@@ -66,11 +75,11 @@ def curated_rows(storage):
 def test_plan_is_stable_across_retries_and_advances_after_commit(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     p1 = batch.plan_batch("run_0", reader, storage, cfg)
-    assert p1["total_messages"] > 0 and p1["batch_id"].startswith("b")
+    assert p1.has_data and p1.batch_id.startswith("b")
     # retry with the same run id: identical plan even though nothing was committed
     assert batch.plan_batch("run_0", reader, storage, cfg) == p1
     # a new run before any commit plans the same ranges (nothing was consumed yet)
-    assert batch.plan_batch("run_1", reader, storage, cfg)["ranges"] == p1["ranges"]
+    assert batch.plan_batch("run_1", reader, storage, cfg).ranges == p1.ranges
 
 
 def _hold_back_half(consumer):
@@ -93,30 +102,25 @@ def test_next_run_after_a_failed_run_reuses_its_plan_and_leaves_no_duplicates(tm
     storage, reader = LocalStorage(str(tmp_path)), KafkaBatchReader("x", "g", consumer=consumer)
     held = _hold_back_half(consumer)
     # run_0 writes every output but never commits (finalize failed on every retry)
-    p0 = batch.plan_batch("run_0", reader, storage, cfg)
-    s0 = batch.process_batch(p0, reader, storage, cfg)
-    batch.compute_metrics(p0, s0, storage, cfg)
+    p0, _s0, _published = crash_before_commit(0, reader, storage, cfg)
     for tp, rest in held.items():                                           # ingest kept running
         consumer.log[tp] += rest
-    p1 = batch.plan_batch("run_1", reader, storage, cfg)
-    assert (p1["batch_id"], p1["ranges"], p1["first_run_id"], p1["run_id"]) == \
-        (p0["batch_id"], p0["ranges"], "run_0", "run_1")
-    s1 = batch.process_batch(p1, reader, storage, cfg)
-    entry = batch.finalize_batch(p1, s1, batch.compute_metrics(p1, s1, storage, cfg), reader, storage, cfg)
-    assert entry["run_id"] == "run_1"
+    p1, s1 = run_batch(1, reader, storage, cfg)                             # the driver takes the plan over
+    assert (p1.batch_id, p1.ranges, p1.first_run_id, p1.run_id) == (p0.batch_id, p0.ranges, "run_0", "run_1")
+    assert s1 is not None and [r["run_id"] for r in batch_log_rows(storage)] == ["run_1"]
     for prefix in (lake.CURATED_STATUS.prefix, lake.RAW_STATUS.prefix, lake.DLQ):      # one row per Kafka offset
         rows, distinct = _rows_by_offset(storage, prefix)
         assert rows == distinct > 0, prefix
     gold_batches = {r["batch_id"] for k in storage.list(lake.GOLD_WINDOW + "/")
                     for r in read_parquet(storage, k).to_pylist()}
-    assert gold_batches == {p0["batch_id"]}
+    assert gold_batches == {p0.batch_id}
     # committed: the pending plan is gone, and the next plan starts where this one ended
     assert not storage.exists(batch.PENDING_PLAN)
     p2 = batch.plan_batch("run_2", reader, storage, cfg)
-    assert p2["batch_id"] != p0["batch_id"] and p2["total_messages"] > 0
-    for topic, parts in p2["ranges"].items():
+    assert p2.batch_id != p0.batch_id and p2.has_data
+    for topic, parts in p2.ranges.items():
         for part, (start, _end) in parts.items():
-            assert start == p0["ranges"][topic][part][1]
+            assert start == p0.ranges[topic][part][1]
 
 
 def test_pending_plan_is_dropped_when_its_offsets_no_longer_exist(tmp_path, capture):
@@ -126,33 +130,33 @@ def test_pending_plan_is_dropped_when_its_offsets_no_longer_exist(tmp_path, capt
     _hold_back_half(consumer)
     _hold_back_half(consumer)
     fresh = batch.plan_batch("run_1", reader, storage, cfg)
-    assert fresh["batch_id"] != stale["batch_id"] and fresh["first_run_id"] == "run_1"
-    assert batch.process_batch(fresh, reader, storage, cfg)["records_read"] == fresh["total_messages"]
+    assert fresh.batch_id != stale.batch_id and fresh.first_run_id == "run_1"
+    assert batch.process_batch(fresh, reader, storage, cfg).records_read == fresh.total_messages
 
 
 def test_an_empty_plan_is_never_saved_as_pending(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     saved = dict(consumer.log)
     consumer.log.clear()                                                    # idle: nothing to read
-    assert batch.plan_batch("run_0", reader, storage, cfg)["total_messages"] == 0
+    assert not batch.plan_batch("run_0", reader, storage, cfg).has_data
     assert not storage.exists(batch.PENDING_PLAN)
     consumer.log.update(saved)                                              # data arrives
-    assert batch.plan_batch("run_1", reader, storage, cfg)["total_messages"] > 0
+    assert batch.plan_batch("run_1", reader, storage, cfg).has_data
 
 
 def test_full_drain_commits_everything_and_loses_nothing(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plans = drain(reader, storage, cfg)
-    assert len(plans) > 1, "cap should force several batches"
+    batches = drain(reader, storage, cfg)
+    assert len(batches) > 1, "cap should force several batches"
     # every partition committed up to its high watermark
     for (topic, part), entries in consumer.log.items():
         if topic != "citibike.station_info":
             assert consumer.commits[(topic, part)] == len(entries)
-    total_read = sum(e["records_read"] for _p, e in plans)
+    total_read = sum(st.records_read for _p, st in batches)
     assert total_read == sum(len(v) for (t, _p), v in consumer.log.items() if t != "citibike.station_info")
     # accounting: raw rows + DLQ-without-raw == read; nothing silently vanishes
-    for _p, e in plans:
-        assert e["status_rows"] + e["duplicates_dropped"] <= e["raw_rows"]
+    for _p, st in batches:
+        assert st.status_rows + st.duplicates_dropped <= st.raw_rows
 
 
 def test_validation_flags_land_in_dlq_not_curated(tmp_path, capture):
@@ -247,12 +251,12 @@ def test_depleting_station_becomes_at_risk_before_it_empties(tmp_path, capture):
 
 def test_retry_after_crash_before_commit_is_idempotent(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plan, _ = run_batch(0, reader, storage, cfg, fail_before_commit=True)   # outputs written, offsets NOT committed
+    plan, _stats, _published = crash_before_commit(0, reader, storage, cfg)  # outputs written, NOT committed
     keys_after_crash = storage.list("")
     assert consumer.commits == {}
     # Airflow retries the same run: same plan, same keys, same rows
-    plan2, entry = run_batch(0, reader, storage, cfg)
-    assert plan2 == plan and entry is not None
+    plan2, stats2 = run_batch(0, reader, storage, cfg)
+    assert plan2 == plan and stats2 is not None
     new_keys = set(storage.list("")) - set(keys_after_crash)
     assert all(k.startswith(("ops/batch_log", "gold/serving")) or k in keys_after_crash for k in new_keys)
     rows = curated_rows(storage)
@@ -262,22 +266,22 @@ def test_retry_after_crash_before_commit_is_idempotent(tmp_path, capture):
 
 def test_next_batch_does_not_reread_committed_offsets(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    p0, e0 = run_batch(0, reader, storage, cfg)
-    p1, e1 = run_batch(1, reader, storage, cfg)
-    for topic, parts in p1["ranges"].items():
+    p0, _s0 = run_batch(0, reader, storage, cfg)
+    p1, _s1 = run_batch(1, reader, storage, cfg)
+    for topic, parts in p1.ranges.items():
         for part, (s, _e) in parts.items():
-            assert s == p0["ranges"][topic][part][1]
+            assert s == p0.ranges[topic][part][1]
 
 
 def test_batch_log_holds_measured_values_not_constants(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plans = drain(reader, storage, cfg)
-    entries = [e for _p, e in plans if e["status_rows"]]
+    batches = drain(reader, storage, cfg)
+    recent = batch_log_rows(storage)
+    entries = [e for e in recent if e["status_rows"]]
     p50s = {e["latency_p50_s"] for e in entries}
     assert len(p50s) > 1 and all(e["latency_p50_s"] >= 0 for e in entries)
     assert all(e["latency_p95_s"] >= e["latency_p50_s"] for e in entries)
-    recent = read_parquet(storage, lake.SERVING_BATCH_LOG).to_pylist()
-    assert len({r["batch_id"] for r in recent}) == len(recent) == len(plans)
+    assert len({r["batch_id"] for r in recent}) == len(recent) == len(batches)
 
 
 def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
@@ -394,17 +398,6 @@ def test_compact_due_treats_a_naive_now_as_utc(tmp_path, capture):
     assert lake.compact_due(storage, now=START + timedelta(hours=4)) == {}
 
 
-def test_batch_latencies_fail_loudly_without_hours(tmp_path, capture):
-    cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
-    published_at = START + timedelta(minutes=MINUTES)
-    no_hours = {k: v for k, v in stats.items() if k != "status_hours"}
-    with pytest.raises(KeyError):
-        batch.batch_latencies(storage, plan, no_hours, published_at)
-    with pytest.raises(ValueError):
-        batch.batch_latencies(storage, plan, dict(no_hours, status_keys=["not/a/batch/key.parquet"]), published_at)
-
-
 def test_read_batch_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     assert len(drain(reader, storage, cfg)) > 1
@@ -419,37 +412,24 @@ def test_read_batch_finds_one_batch_inside_a_compacted_file(tmp_path, capture):
 
 def test_finalize_succeeds_after_compaction_merged_the_batch_files(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
-    publish = batch.compute_metrics(plan, stats, storage, cfg, now=START + timedelta(minutes=MINUTES))
-    direct = sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"])))
+    plan, stats, published = crash_before_commit(0, reader, storage, cfg)
+    direct = sorted(batch.batch_latencies(storage, plan, stats, published.published_at))
     assert direct
     assert lake.compact_due(storage, now=START + timedelta(hours=4))     # e.g. a replay into old hours
-    entry = batch.finalize_batch(plan, stats, publish, reader, storage, cfg, now=START + timedelta(minutes=MINUTES))
-    assert sorted(batch.batch_latencies(storage, plan, stats, parse_iso(publish["published_at"]))) == direct
-    assert entry["latency_p50_s"] is not None
-
-
-def test_finalize_accepts_stats_from_before_status_hours(tmp_path, capture):
-    # A run in flight across the deploy carries the old stats shape: file keys instead of hours.
-    cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plan, stats = run_batch(0, reader, storage, cfg, fail_before_commit=True)
-    published_at = START + timedelta(minutes=MINUTES)
-    direct = sorted(batch.batch_latencies(storage, plan, stats, published_at))
-    legacy = {k: v for k, v in stats.items() if k != "status_hours"}
-    legacy["status_keys"] = ["%s/%s.parquet" % (lake.partition_path(CURATED.prefix, parse_iso(h)), plan["batch_id"])
-                             for h in stats["status_hours"]]
-    assert direct and sorted(batch.batch_latencies(storage, plan, legacy, published_at)) == direct
+    batch.finalize_batch(plan, stats, published, reader, storage, cfg, now=now_of(0))
+    assert sorted(batch.batch_latencies(storage, plan, stats, published.published_at)) == direct
+    assert batch_log_rows(storage)[0]["latency_p50_s"] is not None
 
 
 def test_retry_after_compaction_does_not_read_its_own_rows_as_prior_context(tmp_path, capture):
     # A batch whose hour is compacted before it is retried (replay or catch-up into hours older than
     # the compaction lag): the retry must not see its own first attempt inside compacted.parquet.
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
-    plan, first = run_batch(0, reader, storage, cfg, fail_before_commit=True)
+    plan, first, _published = crash_before_commit(0, reader, storage, cfg)
     assert lake.compact_due(storage, now=START + timedelta(hours=4))
-    retry = batch.process_batch(plan, reader, storage, cfg, now=START + timedelta(minutes=MINUTES, seconds=5))
+    retry = batch.process_batch(plan, reader, storage, cfg, now=now_of(0))
     for k in ("repeats", "out_of_order", "status_rows"):
-        assert retry[k] == first[k], k
+        assert getattr(retry, k) == getattr(first, k), k
 
 
 LAYOUT = r"^%s/dt=\d{4}-\d{2}-\d{2}/hr=\d{2}/%s$"
@@ -528,8 +508,8 @@ def test_serving_time_never_moves_backwards_when_partitions_skew(tmp_path, captu
     cfg, storage, consumer, reader = make_env(tmp_path, capture, cap=150)
     seen = []
     for i in range(200):
-        plan, entry = run_batch(i, reader, storage, cfg)
-        if entry is None:
+        _plan, stats = run_batch(i, reader, storage, cfg)
+        if stats is None:
             break
         seen.append(read_parquet(storage, lake.SERVING_SUMMARY).to_pylist()[0]["as_of"])
     assert len(seen) > 5 and seen == sorted(seen)
@@ -543,3 +523,17 @@ def test_status_reports_fresh_and_stale_lake(tmp_path, capture):
     res = summarize(storage, max_age_min=10 ** 9)
     assert res["ok"] and res["stations"] == 40 and res["batches_last_24h"] > 1
     assert summarize(storage, max_age_min=1)["ok"] is False           # batches are from 2026-10-20: stale now
+
+
+def test_records_survive_an_xcom_round_trip_with_the_json_keys_of_the_old_dicts(tmp_path, capture):
+    cfg, storage, consumer, reader = make_env(tmp_path, capture)
+    plan, stats, published = crash_before_commit(0, reader, storage, cfg)
+    for record in (plan, stats, published):
+        wire = json.loads(json.dumps(record.to_json()))
+        assert type(record).from_json(wire) == record
+    assert set(plan.to_json()) == {"run_id", "first_run_id", "batch_id", "planned_at", "ranges", "total_messages"}
+    assert set(stats.to_json()) == {"batch_id", "as_of", "records_read", "raw_rows", "status_rows", "weather_rows",
+                                    "dlq_rows", "duplicates_dropped", "repeats", "out_of_order", "stale",
+                                    "unknown_station", "replay_rows", "status_hours"}
+    with pytest.raises(KeyError):
+        batch.Stats.from_json({k: v for k, v in stats.to_json().items() if k != "status_hours"})

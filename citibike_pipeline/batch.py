@@ -14,9 +14,9 @@ import json
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 
 import pyarrow as pa
 
@@ -26,6 +26,7 @@ from . import lake
 from .config import DATA_TOPICS, PipelineConfig
 from .kafka_io import (
     KafkaBatchReader,
+    Ranges,
     Record,
     cap_ranges,
     fits_within,
@@ -62,6 +63,97 @@ def safe_id(run_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------------------------
+# records passed between the steps
+# ---------------------------------------------------------------------------------------------
+# Each record has to_json/from_json so it can travel through Airflow XCom. The JSON keys are the ones the
+# steps used to pass as dicts, so values already in flight and the files under ops/batch_plan/ stay readable.
+# from_json indexes every field, so a missing one raises KeyError when the record is built.
+
+JsonObject = Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class Plan:
+    """A batch's offset ranges, fixed before anything is read, and the runs that planned and took it."""
+    run_id: str
+    first_run_id: str
+    batch_id: str
+    planned_at: datetime
+    ranges: Ranges
+    total_messages: int
+
+    @property
+    def has_data(self) -> bool:
+        return self.total_messages > 0
+
+    def to_json(self) -> JsonObject:
+        return {"run_id": self.run_id, "first_run_id": self.first_run_id, "batch_id": self.batch_id,
+                "planned_at": iso(self.planned_at), "ranges": ranges_to_json(self.ranges),
+                "total_messages": self.total_messages}
+
+    @classmethod
+    def from_json(cls, obj: JsonObject) -> Plan:
+        return cls(run_id=str(obj["run_id"]), first_run_id=str(obj["first_run_id"]), batch_id=str(obj["batch_id"]),
+                   planned_at=parse_iso(str(obj["planned_at"])), ranges=ranges_from_json(obj["ranges"]),
+                   total_messages=int(obj["total_messages"]))
+
+
+@dataclass(frozen=True)
+class Stats:
+    """What process_batch counted and wrote for a batch."""
+    batch_id: str
+    as_of: datetime
+    records_read: int
+    raw_rows: int
+    status_rows: int
+    weather_rows: int
+    dlq_rows: int
+    duplicates_dropped: int
+    repeats: int
+    out_of_order: int
+    stale: int
+    unknown_station: int
+    replay_rows: int
+    status_hours: Tuple[datetime, ...]
+
+    def to_json(self) -> JsonObject:
+        return {"batch_id": self.batch_id, "as_of": iso(self.as_of), "records_read": self.records_read,
+                "raw_rows": self.raw_rows, "status_rows": self.status_rows, "weather_rows": self.weather_rows,
+                "dlq_rows": self.dlq_rows, "duplicates_dropped": self.duplicates_dropped,
+                "repeats": self.repeats, "out_of_order": self.out_of_order, "stale": self.stale,
+                "unknown_station": self.unknown_station, "replay_rows": self.replay_rows,
+                "status_hours": [iso(h) for h in self.status_hours]}
+
+    @classmethod
+    def from_json(cls, obj: JsonObject) -> Stats:
+        return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])),
+                   records_read=int(obj["records_read"]), raw_rows=int(obj["raw_rows"]),
+                   status_rows=int(obj["status_rows"]), weather_rows=int(obj["weather_rows"]),
+                   dlq_rows=int(obj["dlq_rows"]), duplicates_dropped=int(obj["duplicates_dropped"]),
+                   repeats=int(obj["repeats"]), out_of_order=int(obj["out_of_order"]), stale=int(obj["stale"]),
+                   unknown_station=int(obj["unknown_station"]), replay_rows=int(obj["replay_rows"]),
+                   status_hours=tuple(parse_iso(str(h)) for h in obj["status_hours"]))
+
+
+@dataclass(frozen=True)
+class Published:
+    """What compute_metrics wrote to the serving files; published_at is None when the batch had no status rows."""
+    published_at: Optional[datetime]
+    stations: int
+    at_risk: int = 0
+
+    def to_json(self) -> JsonObject:
+        return {"published_at": iso(self.published_at) if self.published_at else None,
+                "stations": self.stations, "at_risk": self.at_risk}
+
+    @classmethod
+    def from_json(cls, obj: JsonObject) -> Published:
+        published_at = obj["published_at"]
+        return cls(published_at=parse_iso(str(published_at)) if published_at else None,
+                   stations=int(obj["stations"]), at_risk=int(obj.get("at_risk", 0)))
+
+
+# ---------------------------------------------------------------------------------------------
 # plan
 # ---------------------------------------------------------------------------------------------
 
@@ -69,25 +161,25 @@ PENDING_PLAN = "ops/batch_plan/pending.json"
 
 
 def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
-               now: Optional[datetime] = None) -> Dict[str, Any]:
+               now: Optional[datetime] = None) -> Plan:
     """The batch to process next. Reuses the pending (planned, not yet committed) plan when it still
     starts at the committed offsets and all its offsets still exist, so a rerun of a failed batch keeps
     its batch_id. Otherwise, e.g. after a broker reset recreated the topics, it plans afresh."""
     positions = reader.positions(DATA_TOPICS)
-    pending = get_json(storage, PENDING_PLAN) if storage.exists(PENDING_PLAN) else None
-    if pending is not None and fits_within(ranges_from_json(pending["ranges"]), positions):
-        plan = dict(pending, run_id=run_id)
-        if pending["first_run_id"] != run_id:
-            log.warning("reusing uncommitted plan %s first made by run %s", plan["batch_id"], plan["first_run_id"])
+    pending = Plan.from_json(get_json(storage, PENDING_PLAN)) if storage.exists(PENDING_PLAN) else None
+    if pending is not None and fits_within(pending.ranges, positions):
+        plan = replace(pending, run_id=run_id)
+        if pending.first_run_id != run_id:
+            log.warning("reusing uncommitted plan %s first made by run %s", plan.batch_id, plan.first_run_id)
     else:
         ranges = cap_ranges(positions, cfg.max_batch_per_partition)
-        rj = ranges_to_json(ranges)
-        batch_id = "b" + hashlib.sha1(json.dumps(rj, sort_keys=True).encode()).hexdigest()[:12]
-        plan = {"run_id": run_id, "first_run_id": run_id, "batch_id": batch_id, "planned_at": iso(now or utcnow()),
-                "ranges": rj, "total_messages": total_messages(ranges)}
-        if plan["total_messages"]:
-            put_json(storage, PENDING_PLAN, plan)
-    put_json(storage, "ops/batch_plan/%s.json" % safe_id(run_id), plan)      # per-run audit record
+        batch_id = "b" + hashlib.sha1(json.dumps(ranges_to_json(ranges), sort_keys=True).encode()).hexdigest()[:12]
+        planned_at = parse_iso(iso(now or utcnow()))        # to the millisecond, as stored
+        plan = Plan(run_id=run_id, first_run_id=run_id, batch_id=batch_id, planned_at=planned_at,
+                    ranges=ranges, total_messages=total_messages(ranges))
+        if plan.has_data:
+            put_json(storage, PENDING_PLAN, plan.to_json())
+    put_json(storage, "ops/batch_plan/%s.json" % safe_id(run_id), plan.to_json())      # per-run audit record
     return plan
 
 
@@ -266,11 +358,11 @@ def _choose_as_of(parsed: Parsed, records: List[Record], processed_at: datetime)
     return from_epoch(max(kafka_ms) / 1000.0) if kafka_ms else processed_at
 
 
-def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
-                  now: Optional[datetime] = None) -> Dict[str, Any]:
-    batch_id = plan["batch_id"]
+def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
+                  now: Optional[datetime] = None) -> Stats:
+    batch_id = plan.batch_id
     processed_at = now or utcnow()
-    records = reader.read(ranges_from_json(plan["ranges"]), cfg.read_timeout_s)
+    records = reader.read(plan.ranges, cfg.read_timeout_s)
     parsed = parse_records(records, batch_id, processed_at, cfg)
 
     as_of = _choose_as_of(parsed, records, processed_at)
@@ -287,7 +379,7 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
     weather_rows = _weather_rows(parsed.weather, batch_id, processed_at)
     weather_obs = prior_weather_t.to_pylist() + weather_rows
 
-    status_rows, stats = build_status_rows(parsed, prior, _load_dim(storage), weather_obs, batch_id,
+    status_rows, counts = build_status_rows(parsed, prior, _load_dim(storage), weather_obs, batch_id,
                                            processed_at, cfg)
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
@@ -301,14 +393,14 @@ def process_batch(plan: Dict[str, Any], reader: KafkaBatchReader, storage: Stora
     if parsed.dlq_rows:
         put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id), to_table(parsed.dlq_rows, DLQ))
 
-    stats.update({
-        "batch_id": batch_id, "as_of": iso(as_of), "records_read": len(records),
-        "raw_rows": len(parsed.raw_rows), "status_rows": len(status_rows),
-        "weather_rows": len(weather_rows), "dlq_rows": len(parsed.dlq_rows),
-        "status_hours": [iso(h) for h in status_hours],
-    })
+    stats = Stats(
+        batch_id=batch_id, as_of=as_of, records_read=len(records), raw_rows=len(parsed.raw_rows),
+        status_rows=len(status_rows), weather_rows=len(weather_rows), dlq_rows=len(parsed.dlq_rows),
+        duplicates_dropped=counts["duplicates_dropped"], repeats=counts["repeats"],
+        out_of_order=counts["out_of_order"], stale=counts["stale"], unknown_station=counts["unknown_station"],
+        replay_rows=counts["replay_rows"], status_hours=tuple(status_hours))
     log.info("batch %s: read=%d raw=%d status=%d weather=%d dlq=%d as_of=%s", batch_id, len(records),
-             len(parsed.raw_rows), len(status_rows), len(weather_rows), len(parsed.dlq_rows), stats["as_of"])
+             len(parsed.raw_rows), len(status_rows), len(weather_rows), len(parsed.dlq_rows), iso(as_of))
     return stats
 
 
@@ -324,12 +416,12 @@ METRIC_COLS = [
 ]
 
 
-def compute_metrics(plan: Dict[str, Any], stats: Dict[str, Any], storage: Storage, cfg: PipelineConfig,
-                    now: Optional[datetime] = None) -> Dict[str, Any]:
-    batch_id = plan["batch_id"]
-    if not stats.get("status_rows"):
-        return {"published_at": None, "stations": 0}
-    as_of = parse_iso(stats["as_of"])
+def compute_metrics(plan: Plan, stats: Stats, storage: Storage, cfg: PipelineConfig,
+                    now: Optional[datetime] = None) -> Published:
+    batch_id = plan.batch_id
+    if not stats.status_rows:
+        return Published(published_at=None, stations=0)
+    as_of = stats.as_of
     if storage.exists(lake.SERVING_SUMMARY):
         # A catch-up batch can end earlier than the previous one (partitions drain at different speeds).
         # Serving time never moves backwards; a retry sees its own earlier value and stays stable.
@@ -411,51 +503,46 @@ def compute_metrics(plan: Dict[str, Any], stats: Dict[str, Any], storage: Storag
     put_parquet(storage, lake.SERVING_AT_RISK, to_table(at_risk_rows, CURRENT_STATE))
     put_parquet(storage, lake.SERVING_SUMMARY, to_table([availability], SYSTEM_AVAILABILITY))
     put_parquet(storage, lake.SERVING_CURRENT, to_table(state_rows, CURRENT_STATE))
-    log.info("batch %s: published %d stations, %d at risk", plan["batch_id"], total, len(at_risk_rows))
-    return {"published_at": iso(now or utcnow()), "stations": total, "at_risk": len(at_risk_rows)}
+    log.info("batch %s: published %d stations, %d at risk", plan.batch_id, total, len(at_risk_rows))
+    return Published(published_at=now or utcnow(), stations=total, at_risk=len(at_risk_rows))
 
 
 # ---------------------------------------------------------------------------------------------
 # finalize
 # ---------------------------------------------------------------------------------------------
 
-def batch_latencies(storage: Storage, plan: Dict[str, Any], stats: Dict[str, Any],
+def batch_latencies(storage: Storage, plan: Plan, stats: Stats,
                     published_at: Optional[datetime]) -> List[float]:
     """Seconds from observation (or replay time) to the moment the serving files were written."""
-    if published_at is None or not stats.get("status_rows"):
+    if published_at is None or not stats.status_rows:
         return []
-    if "status_hours" in stats:
-        hours = [parse_iso(h) for h in stats["status_hours"]]
-    elif "status_keys" in stats:            # stats from a run started before the deploy that added hours
-        hours = lake.hours_from_legacy_keys(stats["status_keys"])
-    else:
-        raise KeyError("stats of batch %s have status rows but neither status_hours nor status_keys"
-                       % plan["batch_id"])
-    t = lake.CURATED_STATUS.read_batch(storage, plan["batch_id"], hours, ["fetched_at", "replayed_at"])
+    t = lake.CURATED_STATUS.read_batch(storage, plan.batch_id, list(stats.status_hours),
+                                       ["fetched_at", "replayed_at"])
     return [max((published_at - (r or f)).total_seconds(), 0.0)
             for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist())]
 
 
-def finalize_batch(plan: Dict[str, Any], stats: Dict[str, Any], publish: Dict[str, Any],
+def finalize_batch(plan: Plan, stats: Stats, published: Published,
                    reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
-                   now: Optional[datetime] = None) -> Dict[str, Any]:
-    published_at = parse_iso(publish["published_at"]) if publish.get("published_at") else None
+                   now: Optional[datetime] = None) -> None:
+    """Write the Batch log entry, then commit the plan's offsets, last of all."""
+    published_at = published.published_at
     lat = sorted(batch_latencies(storage, plan, stats, published_at))
     finished = now or utcnow()
-    as_of = parse_iso(stats["as_of"])
+    as_of = stats.as_of
     entry = {
-        "batch_id": plan["batch_id"], "run_id": plan["run_id"], "as_of": as_of,
-        "planned_at": parse_iso(plan["planned_at"]), "published_at": published_at, "finished_at": finished,
-        "records_read": stats["records_read"], "raw_rows": stats["raw_rows"], "status_rows": stats["status_rows"],
-        "weather_rows": stats["weather_rows"], "dlq_rows": stats["dlq_rows"],
-        "duplicates_dropped": stats["duplicates_dropped"], "repeats": stats["repeats"],
-        "out_of_order": stats["out_of_order"], "stale": stats["stale"],
-        "unknown_station": stats["unknown_station"], "replay_rows": stats["replay_rows"],
+        "batch_id": plan.batch_id, "run_id": plan.run_id, "as_of": as_of,
+        "planned_at": plan.planned_at, "published_at": published_at, "finished_at": finished,
+        "records_read": stats.records_read, "raw_rows": stats.raw_rows, "status_rows": stats.status_rows,
+        "weather_rows": stats.weather_rows, "dlq_rows": stats.dlq_rows,
+        "duplicates_dropped": stats.duplicates_dropped, "repeats": stats.repeats,
+        "out_of_order": stats.out_of_order, "stale": stats.stale,
+        "unknown_station": stats.unknown_station, "replay_rows": stats.replay_rows,
         "latency_p50_s": pct(lat, 0.50), "latency_p95_s": pct(lat, 0.95),
         "latency_max_s": lat[-1] if lat else None, "status": "success",
     }
     # per-batch record (authoritative history) keyed by batch_id: retries overwrite
-    put_parquet(storage, lake.part_key(lake.BATCH_LOG, as_of, "%s.parquet" % plan["batch_id"]),
+    put_parquet(storage, lake.part_key(lake.BATCH_LOG, as_of, "%s.parquet" % plan.batch_id),
                 to_table([entry], BATCH_LOG))
     # rolling table for the health panel: dedupe by batch_id, keep the last 24 h
     recent: List[Dict[str, Any]] = []
@@ -467,9 +554,30 @@ def finalize_batch(plan: Dict[str, Any], stats: Dict[str, Any], publish: Dict[st
     recent = sorted((r for r in recent if r["as_of"] >= cutoff), key=lambda r: r["as_of"])
     put_parquet(storage, lake.SERVING_BATCH_LOG, to_table(recent, BATCH_LOG))
 
-    reader.commit(ranges_from_json(plan["ranges"]))          # last: only after every output exists
-    if storage.exists(PENDING_PLAN) and get_json(storage, PENDING_PLAN)["batch_id"] == plan["batch_id"]:
+    reader.commit(plan.ranges)          # last: only after every output exists
+    if storage.exists(PENDING_PLAN) and get_json(storage, PENDING_PLAN)["batch_id"] == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
-    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan["batch_id"], entry["latency_p50_s"],
+    log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, entry["latency_p50_s"],
              entry["latency_p95_s"])
-    return {k: (iso(v) if isinstance(v, datetime) else v) for k, v in entry.items()}
+
+
+# ---------------------------------------------------------------------------------------------
+# driver
+# ---------------------------------------------------------------------------------------------
+
+# The steps of a batch, in the order run_batch takes them. The Airflow DAG has one task per step, in this order.
+STEPS = ("plan", "process", "metrics", "finalize")
+
+
+def run_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
+              now: Optional[datetime] = None) -> Tuple[Plan, Optional[Stats]]:
+    """Run one Airflow run's batch through every step (STEPS): plan, stop if the plan has no data, process,
+    publish metrics, finalize with the offset commit last. Returns the plan and its stats, or None for the
+    stats when there was nothing to read."""
+    plan = plan_batch(run_id, reader, storage, cfg, now=now)
+    if not plan.has_data:
+        return plan, None
+    stats = process_batch(plan, reader, storage, cfg, now=now)
+    published = compute_metrics(plan, stats, storage, cfg, now=now)
+    finalize_batch(plan, stats, published, reader, storage, cfg, now=now)
+    return plan, stats

@@ -239,15 +239,3 @@ def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int
                 result[name] = res
                 log.info("compacted %s: %d files -> %d rows", name, res["sources"], res["rows"])
     return result
-
-
-def hours_from_legacy_keys(keys: Iterable[str]) -> List[datetime]:
-    """The hours named by batch file keys, for stats written before process_batch returned hours.
-    Remove once no in-flight micro-batch run can still hold such stats. Raises on a key without an hour."""
-    hours = set()
-    for key in keys:
-        hour = _hour_from_key(key)
-        if hour is None:
-            raise ValueError("not a lake table batch file key: %r" % key)
-        hours.add(hour)
-    return sorted(hours)

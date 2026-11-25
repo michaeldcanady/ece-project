@@ -43,3 +43,10 @@ def test_micro_batch_is_serial_every_minute_and_not_paused(bag):
 def test_all_dags_run_unattended(bag):
     for dag in bag.dags.values():
         assert dag.is_paused_upon_creation is False and dag.max_active_runs == 1 and dag.catchup is False
+
+
+def test_micro_batch_tasks_follow_the_drivers_step_order(bag):
+    from citibike_pipeline import batch
+    order = [t.task_id for t in bag.dags["citibike_micro_batch"].topological_sort()]
+    assert [t for t in order if t != "has_data"] == list(batch.STEPS)
+    assert order[order.index("plan") + 1] == "has_data"                  # the gate sits right after the plan
