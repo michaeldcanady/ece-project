@@ -1,10 +1,9 @@
-"""Payload validation; the envelope itself is checked by the contract's decode. Every rule returns reason
-codes; nothing is silently dropped."""
+"""Payload validation for station information; the envelope itself is checked by the contract's decode, and the
+station status and weather payloads by their parse in observations.py. Every rule returns reason codes;
+nothing is silently dropped."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
-
-BOOL_LIKE = (0, 1, True, False)
 
 
 def _is_int(x: Any) -> bool:
@@ -13,42 +12,6 @@ def _is_int(x: Any) -> bool:
 
 def _is_num(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
-
-
-def validate_status_payload(p: Dict[str, Any], fetched_s: float, future_skew_s: int) -> List[str]:
-    errors: List[str] = []
-    sid = p.get("station_id")
-    if not isinstance(sid, str) or not sid:
-        errors.append("bad_station_id")
-    for field in ("num_bikes_available", "num_docks_available"):
-        if not _is_int(p.get(field)) or p[field] < 0:
-            errors.append("bad_" + field)
-    for field in ("num_ebikes_available", "num_bikes_disabled", "num_docks_disabled"):
-        if field in p and (not _is_int(p[field]) or p[field] < 0):
-            errors.append("bad_" + field)
-    for field in ("is_installed", "is_renting", "is_returning"):
-        if field in p and p[field] not in BOOL_LIKE:
-            errors.append("bad_" + field)
-    lr = p.get("last_reported")
-    if lr is None:
-        errors.append("missing_last_reported")
-    elif not _is_int(lr) or lr < 0:
-        errors.append("bad_last_reported")
-    elif lr > fetched_s + future_skew_s:
-        errors.append("last_reported_in_future")
-    return errors
-
-
-def validate_weather_payload(p: Dict[str, Any]) -> List[str]:
-    cur = p.get("current")
-    if not isinstance(cur, dict):
-        return ["missing_current"]
-    errors: List[str] = []
-    if not _is_num(cur.get("time")):
-        errors.append("bad_obs_time")
-    if "temperature_2m" in cur and cur["temperature_2m"] is not None and not _is_num(cur["temperature_2m"]):
-        errors.append("bad_temperature")
-    return errors
 
 
 def validate_station_info_payload(p: Dict[str, Any]) -> List[str]:
@@ -60,4 +23,3 @@ def validate_station_info_payload(p: Dict[str, Any]) -> List[str]:
     if "capacity" in p and p["capacity"] is not None and not _is_int(p["capacity"]):
         errors.append("bad_capacity")
     return errors
-

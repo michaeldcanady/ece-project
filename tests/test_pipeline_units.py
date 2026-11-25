@@ -8,12 +8,9 @@ from citibike_pipeline.batch import parse_records
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.metrics import Obs, station_state, window_metrics
+from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
 from citibike_pipeline.storage import LocalStorage, S3Storage
-from citibike_pipeline.validation import (
-    validate_station_info_payload,
-    validate_status_payload,
-    validate_weather_payload,
-)
+from citibike_pipeline.validation import validate_station_info_payload
 
 CFG = PipelineConfig()
 NOW = 1_760_000_000.0
@@ -58,17 +55,39 @@ def good_status(**over):
     ({"last_reported": int(NOW) + 3600}, "last_reported_in_future"),
 ])
 def test_status_validation_rules(over, reason):
-    assert reason in validate_status_payload(good_status(**over), NOW, 300)
+    rejected = StationStatus.parse(good_status(**over), NOW, 300)
+    assert isinstance(rejected, Rejected) and reason in rejected.reasons
 
 
 def test_status_validation_accepts_good_and_small_clock_skew():
-    assert validate_status_payload(good_status(), NOW, 300) == []
-    assert validate_status_payload(good_status(last_reported=int(NOW) + 100), NOW, 300) == []
+    assert isinstance(StationStatus.parse(good_status(), NOW, 300), StationStatus)
+    assert isinstance(StationStatus.parse(good_status(last_reported=int(NOW) + 100), NOW, 300), StationStatus)
+
+
+def test_status_parse_gives_typed_fields_and_defaults_the_flags():
+    st = StationStatus.parse({"station_id": "a", "num_bikes_available": 3, "num_docks_available": 7,
+                              "last_reported": 5}, NOW, 300)
+    assert st == StationStatus(station_id="a", last_reported=5, num_bikes_available=3, num_docks_available=7,
+                               num_ebikes_available=None, num_bikes_disabled=None, num_docks_disabled=None,
+                               is_installed=True, is_renting=True, is_returning=True)
+
+
+def test_status_parse_reports_every_reason():
+    rejected = StationStatus.parse({"station_id": "", "num_bikes_available": -1}, NOW, 300)
+    assert rejected == Rejected(("bad_station_id", "bad_num_bikes_available", "bad_num_docks_available",
+                                 "missing_last_reported"))
+
+
+def test_weather_parse():
+    obs = WeatherObservation.parse({"location_id": "nyc", "current": {"time": 1, "temperature_2m": 3.0}})
+    assert isinstance(obs, WeatherObservation) and obs.location_id == "nyc" and obs.temperature_c == 3.0
+    assert obs.obs_time == datetime(1970, 1, 1, 0, 0, 1, tzinfo=timezone.utc) and obs.rain_mm is None
+    assert WeatherObservation.parse({}) == Rejected(("missing_current",))
+    assert WeatherObservation.parse({"current": {"time": "x", "temperature_2m": "hot"}}) == Rejected(
+        ("bad_obs_time", "bad_temperature"))
 
 
 def test_other_payload_validators():
-    assert validate_weather_payload({"current": {"time": 1, "temperature_2m": 3.0}}) == []
-    assert validate_weather_payload({}) == ["missing_current"]
     assert "bad_coordinates" in validate_station_info_payload({"station_id": "a", "lat": "x", "lon": 1})
 
 

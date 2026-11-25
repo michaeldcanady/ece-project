@@ -1,7 +1,7 @@
 """Explicit Parquet schemas. Kafka coordinates (topic, partition, offset) are the natural row identity."""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Mapping, Sequence
 
 import pyarrow as pa
 
@@ -96,5 +96,5 @@ BATCH_LOG = pa.schema([
 ])
 
 
-def to_table(rows: List[Dict[str, Any]], schema: pa.Schema) -> pa.Table:
+def to_table(rows: Sequence[Mapping[str, object]], schema: pa.Schema) -> pa.Table:
     return pa.Table.from_pylist(rows, schema=schema)

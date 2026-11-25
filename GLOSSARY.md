@@ -43,6 +43,21 @@ _Avoid_: schedule
 The record of micro-batch runs: one entry per batch, with its counts and latencies.
 _Avoid_: run log, ops log
 
+**Station status**:
+One station's bike and dock counts as the feed reported them, parsed from a station-status envelope's payload.
+A payload that fails its parse is rejected with reason codes and never becomes a Station status.
+_Avoid_: message, record (a record is what Kafka stores), observation row (that is the curated row it enriches into)
+
+**Weather observation**:
+The current weather at a location, parsed from a weather envelope's payload.
+_Avoid_: message, record, reading
+
+**Enrichment**:
+The step that turns a Batch's Station statuses into curated rows: it drops duplicate deliveries, flags repeats,
+out-of-order, stale and unknown-station observations, and attaches the station dimension and the latest weather
+at or before each observation. Pure: it reads no storage.
+_Avoid_: transform, processing
+
 **Kafka identity**:
 The (topic, partition, offset) triple that names the message a row came from; no two rows of a lake
 table share one.

@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -88,12 +88,12 @@ class LakeTable:
 
     # -- write --
 
-    def write(self, storage: Storage, batch_id: str, rows: Sequence[Dict[str, Any]]) -> List[datetime]:
+    def write(self, storage: Storage, batch_id: str, rows: Sequence[Mapping[str, object]]) -> List[datetime]:
         """Write a batch's rows, one file per event-time hour, and return those hours.
 
         Overwrite-safe: a retry of the same batch rewrites the same files. If compaction has merged the
         batch's earlier files meanwhile, reads and the next compaction drop the duplicate rows."""
-        groups: Dict[datetime, List[Dict[str, Any]]] = {}
+        groups: Dict[datetime, List[Mapping[str, object]]] = {}
         for r in rows:
             groups.setdefault(_floor_hour(r[_EVENT_TIME]), []).append(r)
         for hour, rs in sorted(groups.items()):
