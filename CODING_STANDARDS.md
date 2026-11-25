@@ -22,3 +22,7 @@ count in its `BASELINE`. Review for what the check cannot see:
 ## Idempotent
 
 See `.claude/rules/idempotent.md`: the same data in gives the same results out. Review a change against it.
+
+## File layout
+
+See `.claude/rules/file-layout.md`: one type per file, and each function with its type or in a module named for its utility. Review a change against it.
