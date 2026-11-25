@@ -48,6 +48,17 @@ The (topic, partition, offset) triple that names the message a row came from; no
 table share one.
 _Avoid_: row id, key
 
+**Serving file**:
+A lake file overwritten every batch for the dashboard to read: current station state, at-risk stations, the
+system summary and the recent Batch log. Written after the batch's history, so a reader never sees a
+batch that history lacks.
+_Avoid_: output file, gold file
+
+**Snapshot**:
+The station states, windows and system availability computed for one batch at one as-of time. A snapshot
+is a value; publishing it is what writes the serving files.
+_Avoid_: metrics (that names the individual measures), report
+
 ## The wire contract
 
 **Envelope**:

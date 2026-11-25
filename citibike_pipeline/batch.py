@@ -22,7 +22,7 @@ import pyarrow as pa
 
 from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, decode
 
-from . import lake
+from . import lake, serving
 from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .kafka_io import (
@@ -35,16 +35,13 @@ from .kafka_io import (
     ranges_to_json,
     total_messages,
 )
-from .metrics import Obs, station_state, window_metrics
 from .schemas import (
-    CURRENT_STATE,
     DLQ,
-    SYSTEM_AVAILABILITY,
-    WINDOW_15M,
     to_table,
 )
+from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
-from .timeutil import epoch, floor_5min, from_epoch, iso, parse_iso, utcnow
+from .timeutil import epoch, from_epoch, iso, parse_iso, utcnow
 from .validation import (
     validate_poll_log_payload,
     validate_status_payload,
@@ -390,103 +387,19 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
 # metrics + serving files
 # ---------------------------------------------------------------------------------------------
 
-METRIC_COLS = [
-    "kafka_partition", "kafka_offset",                 # tie-breakers for the observation order
-    "station_id", "fetched_at", "last_reported", "num_bikes_available", "num_ebikes_available",
-    "num_docks_available", "is_installed", "is_renting", "is_returning", "station_name", "lat", "lon",
-    "capacity", "temperature_c", "precipitation_mm",
-]
-
-
 def compute_metrics(plan: Plan, stats: Stats, storage: Storage, cfg: PipelineConfig,
                     now: Optional[datetime] = None) -> Published:
-    batch_id = plan.batch_id
     if not stats.counts.status_rows:
         return Published(published_at=None, stations=0)
-    as_of = stats.as_of
-    if storage.exists(lake.SERVING_SUMMARY):
-        # A catch-up batch can end earlier than the previous one (partitions drain at different speeds).
-        # Serving time never moves backwards; a retry sees its own earlier value and stays stable.
-        prev = read_parquet(storage, lake.SERVING_SUMMARY, columns=["as_of"])["as_of"].to_pylist()
-        if prev and prev[0] > as_of:
-            as_of = prev[0]
+    as_of = serving.serving_as_of(storage, stats.as_of)
     start = as_of - timedelta(minutes=cfg.context_minutes)
-    table = lake.CURATED_STATUS.read_window(storage, start, as_of + timedelta(milliseconds=1), METRIC_COLS)
-    cols = {c: table[c].to_pylist() for c in table.column_names}
-    n = table.num_rows
-
-    obs: Dict[str, List[Obs]] = defaultdict(list)
-    latest: Dict[str, int] = {}
-    order = list(range(n))
-    order.sort(key=lambda i: (cols["fetched_at"][i], cols["kafka_partition"][i], cols["kafka_offset"][i]))
-    for i in order:
-        sid = cols["station_id"][i]
-        obs[sid].append(Obs(epoch(cols["fetched_at"][i]), cols["num_bikes_available"][i],
-                            cols["num_docks_available"][i]))
-        latest[sid] = i
-
-    as_of_s = epoch(as_of)
-    stale_s = cfg.stale_minutes * 60
-    window_rows: List[Dict[str, Any]] = []
-    state_rows: List[Dict[str, Any]] = []
-    for sid, i in sorted(latest.items()):
-        wm = window_metrics(obs[sid], as_of_s, cfg)
-        age = int(as_of_s) - cols["last_reported"][i]
-        state = station_state(cols["is_installed"][i], cols["is_renting"][i], cols["is_returning"][i],
-                              age > stale_s, cols["num_bikes_available"][i], cols["num_docks_available"][i])
-        at_risk = None
-        if wm:
-            window_rows.append({"station_id": sid, "as_of": as_of, "window_start": from_epoch(wm.pop("window_start")),
-                                "batch_id": batch_id, **wm})
-            if state == "OK":
-                at_risk = "EMPTY" if wm["at_risk_empty"] else ("FULL" if wm["at_risk_full"] else None)
-        state_rows.append({
-            "station_id": sid, "station_name": cols["station_name"][i], "lat": cols["lat"][i],
-            "lon": cols["lon"][i], "capacity": cols["capacity"][i], "state": state,
-            "num_bikes_available": cols["num_bikes_available"][i],
-            "num_ebikes_available": cols["num_ebikes_available"][i],
-            "num_docks_available": cols["num_docks_available"][i], "last_reported": cols["last_reported"][i],
-            "age_s": age, "observed_at": cols["fetched_at"][i],
-            "net_change_15m": wm["net_change"] if wm else None,
-            "rate_per_min": wm["rate_per_min"] if wm else None,
-            "minutes_to_empty": wm["minutes_to_empty"] if wm else None,
-            "minutes_to_full": wm["minutes_to_full"] if wm else None,
-            "at_risk": at_risk, "temperature_c": cols["temperature_c"][i],
-            "precipitation_mm": cols["precipitation_mm"][i], "as_of": as_of, "batch_id": batch_id,
-        })
-
-    total = len(state_rows)
-    operational = [r for r in state_rows if r["state"] != "OFFLINE"]
-    n_op = len(operational) or 1
-    share = lambda pred, pop, denom: (sum(1 for r in pop if pred(r)) / float(denom)) if denom else None  # noqa: E731
-    latest_i = max(latest.values(), key=lambda i: (cols["fetched_at"][i], cols["kafka_offset"][i]))
-    bucket = floor_5min(as_of)
-    availability = {
-        "bucket_start": bucket, "as_of": as_of, "n_stations": total, "n_operational": len(operational),
-        "share_with_bike": share(lambda r: r["num_bikes_available"] > 0, operational, n_op),
-        "share_with_dock": share(lambda r: r["num_docks_available"] > 0, operational, n_op),
-        "share_empty": share(lambda r: r["state"] == "EMPTY", state_rows, total),
-        "share_full": share(lambda r: r["state"] == "FULL", state_rows, total),
-        "share_stale": share(lambda r: r["state"] == "STALE", state_rows, total),
-        "share_offline": share(lambda r: r["state"] == "OFFLINE", state_rows, total),
-        "n_at_risk_empty": sum(1 for r in state_rows if r["at_risk"] == "EMPTY"),
-        "n_at_risk_full": sum(1 for r in state_rows if r["at_risk"] == "FULL"),
-        "temperature_c": cols["temperature_c"][latest_i], "precipitation_mm": cols["precipitation_mm"][latest_i],
-        "batch_id": batch_id,
-    }
-    at_risk_rows = sorted((r for r in state_rows if r["at_risk"]),
-                          key=lambda r: min(x for x in (r["minutes_to_empty"], r["minutes_to_full"]) if x is not None))
-
-    # history first, serving files last (they are what the dashboard reads)
-    put_parquet(storage, lake.part_key(lake.GOLD_WINDOW, as_of, "%s.parquet" % batch_id),
-                to_table(window_rows, WINDOW_15M))
-    put_parquet(storage, lake.part_key(lake.GOLD_AVAILABILITY, as_of, "%s.parquet" % bucket.strftime("%H%M")),
-                to_table([availability], SYSTEM_AVAILABILITY))
-    put_parquet(storage, lake.SERVING_AT_RISK, to_table(at_risk_rows, CURRENT_STATE))
-    put_parquet(storage, lake.SERVING_SUMMARY, to_table([availability], SYSTEM_AVAILABILITY))
-    put_parquet(storage, lake.SERVING_CURRENT, to_table(state_rows, CURRENT_STATE))
-    log.info("batch %s: published %d stations, %d at risk", plan.batch_id, total, len(at_risk_rows))
-    return Published(published_at=now or utcnow(), stations=total, at_risk=len(at_risk_rows))
+    table = lake.CURATED_STATUS.read_window(storage, start, as_of + timedelta(milliseconds=1), STATUS_ROW_COLS)
+    snap = compute_snapshot(StatusRow.from_table(table), as_of, plan.batch_id, cfg)
+    if snap is None:
+        return Published(published_at=None, stations=0)
+    serving.publish(storage, snap)
+    log.info("batch %s: published %d stations, %d at risk", plan.batch_id, len(snap.states), len(snap.at_risk))
+    return Published(published_at=now or utcnow(), stations=len(snap.states), at_risk=len(snap.at_risk))
 
 
 # ---------------------------------------------------------------------------------------------

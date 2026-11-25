@@ -8,7 +8,7 @@ import pytest
 from fakes import load_capture
 
 from citibike_contract import TOPIC_STATUS, Envelope, encode, parse_iso
-from citibike_pipeline import batch, lake
+from citibike_pipeline import batch, lake, serving
 from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import KafkaBatchReader
@@ -225,17 +225,17 @@ def test_serving_files_reflect_scenario(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     build_dim_station(reader, storage, cfg)
     drain(reader, storage, cfg)
-    state = {r["station_id"]: r for r in read_parquet(storage, lake.SERVING_CURRENT).to_pylist()}
+    state = {r["station_id"]: r for r in read_parquet(storage, serving.CURRENT).to_pylist()}
     assert state["st-002"]["state"] == "EMPTY"
     assert state["st-003"]["state"] == "STALE"
     assert state["st-004"]["state"] == "OFFLINE"
     assert state["st-000"]["at_risk"] in ("EMPTY", None)               # depleting 1 bike / 2 min from 18
-    at_risk = {r["station_id"]: r for r in read_parquet(storage, lake.SERVING_AT_RISK).to_pylist()}
+    at_risk = {r["station_id"]: r for r in read_parquet(storage, serving.AT_RISK).to_pylist()}
     assert state["st-000"]["net_change_15m"] < 0
     assert state["st-001"]["net_change_15m"] > 0
     assert state["st-001"]["at_risk"] == "FULL" and state["st-001"]["minutes_to_full"] < cfg.risk_horizon_minutes
     assert "st-002" not in at_risk and "st-003" not in at_risk and "st-004" not in at_risk
-    summary = read_parquet(storage, lake.SERVING_SUMMARY).to_pylist()[0]
+    summary = read_parquet(storage, serving.SUMMARY).to_pylist()[0]
     assert summary["n_stations"] == 40 + 1 - 1                          # 40 real + unknown, minus invalid st-005
     assert 0 < summary["share_empty"] < 1 and summary["share_offline"] > 0
 
@@ -513,7 +513,7 @@ def test_serving_time_never_moves_backwards_when_partitions_skew(tmp_path, captu
         _plan, stats = run_batch(i, reader, storage, cfg)
         if stats is None:
             break
-        seen.append(read_parquet(storage, lake.SERVING_SUMMARY).to_pylist()[0]["as_of"])
+        seen.append(read_parquet(storage, serving.SUMMARY).to_pylist()[0]["as_of"])
     assert len(seen) > 5 and seen == sorted(seen)
 
 

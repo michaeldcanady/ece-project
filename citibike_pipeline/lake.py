@@ -1,5 +1,5 @@
 """The lake: lake tables (hour-partitioned Kafka-sourced rows, written per batch, compacted per hour)
-and the fixed keys of the serving files and batch logs.
+and the fixed keys of the batch logs.
 
 A lake table hides its key layout (prefix/dt=YYYY-MM-DD/hr=HH/<batch_id>.parquet, merged into
 compacted.parquet by compaction) and the rule that keeps reads lossless while compaction runs:
@@ -27,9 +27,6 @@ DIM_STATION_CURRENT = "curated/dim_station/current.parquet"
 DLQ = "dlq"
 GOLD_WINDOW = "gold/station_window_15m"
 GOLD_AVAILABILITY = "gold/system_availability_5m"
-SERVING_CURRENT = "gold/serving/current_station_state.parquet"
-SERVING_AT_RISK = "gold/serving/at_risk.parquet"
-SERVING_SUMMARY = "gold/serving/system_summary.parquet"
 
 IDENTITY = ["kafka_topic", "kafka_partition", "kafka_offset"]
 _EVENT_TIME = "fetched_at"                                     # every lake table's event time

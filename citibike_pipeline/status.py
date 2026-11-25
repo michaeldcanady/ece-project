@@ -7,11 +7,11 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from . import lake
+from . import serving
 from .batch_log import BatchLog
 from .config import PipelineConfig
 from .metrics import pct
-from .storage import Storage, read_parquet, storage_from_config
+from .storage import Storage, storage_from_config
 from .timeutil import utcnow
 
 
@@ -55,17 +55,17 @@ def _printable(value: object) -> object:
 def summarize(storage: Storage, max_age_min: float) -> StatusReport:
     now = utcnow()
     batches = BatchLog(storage).recent(now)
-    if not batches or not storage.exists(lake.SERVING_SUMMARY):
+    s = serving.read_summary(storage)
+    if not batches or s is None:
         return StatusReport(ok=False, health=None,
                             problem="no serving files yet (is the micro-batch DAG running?)")
     last = max(batches, key=lambda r: r.finished_at)
     age_min = (now - last.finished_at).total_seconds() / 60.0
-    s = read_parquet(storage, lake.SERVING_SUMMARY).to_pylist()[0]
     p50 = [r.latencies.p50_s for r in batches[-60:] if r.latencies.p50_s is not None]
     health = LakeHealth(
-        last_batch_finished_min_ago=round(age_min, 1), data_as_of=s["as_of"], stations=s["n_stations"],
-        share_empty=s["share_empty"], share_full=s["share_full"], share_stale=s["share_stale"],
-        at_risk_empty=s["n_at_risk_empty"], at_risk_full=s["n_at_risk_full"], batches_last_24h=len(batches),
+        last_batch_finished_min_ago=round(age_min, 1), data_as_of=s.as_of, stations=s.n_stations,
+        share_empty=s.share_empty, share_full=s.share_full, share_stale=s.share_stale,
+        at_risk_empty=s.n_at_risk_empty, at_risk_full=s.n_at_risk_full, batches_last_24h=len(batches),
         dlq_rows_last_24h=sum(r.counts.dlq_rows for r in batches),
         latency_p50_s_median_last_hour=pct(sorted(p50), 0.5))
     ok = age_min <= max_age_min
