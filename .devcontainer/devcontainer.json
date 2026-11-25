@@ -22,7 +22,7 @@
   },
   "remoteUser": "root",
   "updateRemoteUserUID": false,
-  "postCreateCommand": "mise trust --yes && mise install && mise run sync && git config core.hooksPath .githooks",
+  "postCreateCommand": "mise trust --yes && mise install && mise run sync && git config core.hooksPath .githooks && (git config user.email >/dev/null || git config user.email 64753032+michaeldcanady@users.noreply.github.com) && (git config user.name >/dev/null || git config user.name \"Michael Canady\")",
   "remoteEnv": {
     "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}",
     "UV_LINK_MODE": "copy",

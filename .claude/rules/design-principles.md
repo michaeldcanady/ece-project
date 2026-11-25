@@ -9,18 +9,14 @@ paths:
 
 # Design principles
 
-Source: the Kempner Institute handbook, "Software Design Principles" (sections 6.1–6.13). This rule holds only what the
+Source: the Kempner Institute handbook, "Software Design Principles" (sections 6.1–6.13): https://handbook.eng.kempnerinstitute.harvard.edu/s2_swe_for_research/software_design_principles.html This rule holds only what the
 repo does not already state. Read these in the handbook and do not restate them here: KISS, DRY, YAGNI, separation of
-concerns and single responsibility (6.1); cohesion, coupling and information hiding (6.2); design patterns (6.5). Typed records, idempotence and one type per file are in
-`CODING_STANDARDS.md`.
+concerns and single responsibility (6.1); cohesion, coupling and information hiding (6.2); design patterns (6.5). Typed records, idempotence and one type per file are in `CODING_STANDARDS.md`.
 
-- **Dependencies point one way, toward a core that does no I/O** (6.3, 6.12). A module may import from its own layer or a lower
-  one. Lowest first, for `citibike_pipeline`: contract (`citibike_contract`); core (pure values and logic: parsing,
-  curated rows, Enrichment, Snapshot, window metrics, time helpers); infrastructure (storage, Kafka reader, lake
-  table, schemas, Batch log, serving files); orchestration and entry (Batch steps and driver, reports, status check,
-  runtime wiring, then the DAGs). For `citibike_producer`: contract, then sources and sink, then jobs, then task
-  entry points. `scripts/check_layers.py` enforces this and holds the map; a module in no layer fails it.
-  A core module that needs a Kafka or storage fake to be tested is in the wrong layer.
+- **Dependencies point one way, toward a core that does no I/O** (6.3, 6.12). A module may import from its own layer
+  or a lower one: contract, then core (pure values and logic), then infrastructure (Kafka, storage, the lake), then
+  orchestration and entry. `scripts/check_layers.py` holds the layer map and the producer's chain, enforces this, and
+  fails a module in no layer. A core module that needs a Kafka or storage fake to be tested is in the wrong layer.
 - **Refactors change no behaviour** (6.8). A refactor commit stays apart from a behaviour change, and from documentation or
   glossary edits, so each can be reviewed for what it claims to be.
 - **Significant design decisions are recorded as ADRs** (6.7; context, decision, consequences). Create the ADR directory

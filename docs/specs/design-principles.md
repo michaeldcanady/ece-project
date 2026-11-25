@@ -1,6 +1,6 @@
 # Design principles: a rule, a layer check and an audit
 
-Source: the Kempner Institute handbook, "Software Design Principles" (sections 6.1–6.13), as agreed in the
+Source: the Kempner Institute handbook, "Software Design Principles" (sections 6.1–6.13, <https://handbook.eng.kempnerinstitute.harvard.edu/s2_swe_for_research/software_design_principles.html>), as agreed in the
 grilling of 2026-11-25. Vocabulary: `GLOSSARY.md` and the `codebase-design` skill. Standards: `CODING_STANDARDS.md`.
 
 ## Problem Statement
