@@ -538,3 +538,4 @@ def test_records_survive_an_xcom_round_trip_with_the_json_keys_of_the_old_dicts(
                                     "unknown_station", "replay_rows", "status_hours"}
     with pytest.raises(KeyError):
         batch.Stats.from_json({k: v for k, v in stats.to_json().items() if k != "status_hours"})
+    assert set(published.to_json()) == {"published_at", "stations", "at_risk"}

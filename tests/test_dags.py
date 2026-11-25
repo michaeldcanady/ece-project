@@ -37,7 +37,9 @@ def test_micro_batch_is_serial_every_minute_and_not_paused(bag):
     assert dag.max_active_runs == 1 and dag.catchup is False and dag.is_paused_upon_creation is False
     assert str(dag.timetable.summary) == "* * * * *"
     assert [t.task_id for t in dag.topological_sort()] == ["plan", "has_data", "process", "metrics", "finalize"]
-    assert "has_data" in dag.get_task("process").upstream_task_ids       # no data -> downstream skipped
+    upstream = {t: dag.get_task(t).upstream_task_ids for t in ("plan", "has_data", "process", "metrics", "finalize")}
+    assert upstream == {"plan": set(), "has_data": {"plan"}, "process": {"plan", "has_data"},   # no data -> skipped
+                        "metrics": {"plan", "process"}, "finalize": {"plan", "process", "metrics"}}
 
 
 def test_all_dags_run_unattended(bag):

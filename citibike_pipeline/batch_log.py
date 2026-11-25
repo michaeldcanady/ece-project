@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import astuple, dataclass, fields
 from datetime import date, datetime, time, timedelta, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import pyarrow as pa
 
@@ -43,7 +43,7 @@ class BatchLogEntry:
     latency_p50_s: Optional[float]
     latency_p95_s: Optional[float]
     latency_max_s: Optional[float]
-    status: str
+    status: Literal["success"]
 
 
 class BatchLog:

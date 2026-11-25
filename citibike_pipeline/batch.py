@@ -67,7 +67,7 @@ def safe_id(run_id: str) -> str:
 # ---------------------------------------------------------------------------------------------
 # Each record has to_json/from_json so it can travel through Airflow XCom. The JSON keys are the ones the
 # steps used to pass as dicts, so values already in flight and the files under ops/batch_plan/ stay readable.
-# from_json indexes every field, so a missing one raises KeyError when the record is built.
+# from_json indexes every field (a missing one raises KeyError), except Published.at_risk: old in-flight XCom lacks it.
 
 JsonObject = Mapping[str, object]
 
@@ -543,7 +543,7 @@ def finalize_batch(plan: Plan, stats: Stats, published: Published,
     BatchLog(storage).record(entry)
 
     reader.commit(plan.ranges)          # last: only after every output exists
-    if storage.exists(PENDING_PLAN) and get_json(storage, PENDING_PLAN)["batch_id"] == plan.batch_id:
+    if storage.exists(PENDING_PLAN) and Plan.from_json(get_json(storage, PENDING_PLAN)).batch_id == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
     log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, entry.latency_p50_s,
              entry.latency_p95_s)
