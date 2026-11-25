@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from citibike_contract import Envelope, InvalidEnvelope, decode, encode, kafka_key
+from citibike_contract import Envelope, InvalidEnvelope, MissingKafkaKey, decode, encode, kafka_key
 
 SAMPLE = os.path.join(os.path.dirname(__file__), "..", "data", "sample", "sample_capture.jsonl.gz")
 
@@ -129,18 +129,31 @@ def test_an_unknown_top_level_field_is_dropped_on_decode():
 @pytest.mark.parametrize("event_type, payload, key", [
     ("station_status", {"station_id": "st-1"}, "st-1"),
     ("station_status", {"station_id": 72}, "72"),
-    ("station_status", {}, "_missing_station_id"),
     ("station_information", {"station_id": "st-2"}, "st-2"),
-    ("station_information", {"station_id": None}, "_missing_station_id"),
     ("weather_current", {"location_id": "nyc"}, "nyc"),
-    ("weather_current", {}, "_missing_location_id"),
     ("poll_log", {"job": "station_status"}, "station_status"),
-    ("station_status", "not a station", "_missing_station_id"),
-    ("station_status", ["st-1"], "_missing_station_id"),
-    ("station_information", 42, "_missing_station_id"),
-    ("weather_current", 0, "_missing_location_id"),
-    ("weather_current", "nyc", "_missing_location_id"),
     ("poll_log", ["station_status"], "poll_log"),
 ])
 def test_kafka_key_for_each_event_type(event_type, payload, key):
     assert kafka_key(_envelope(event_type, payload)) == key
+
+
+@pytest.mark.parametrize("event_type, payload, missing", [
+    ("station_status", {}, "station_id"),
+    ("station_information", {"station_id": None}, "station_id"),
+    ("station_status", {"station_id": ""}, "station_id"),
+    ("station_status", "not a station", "station_id"),
+    ("station_status", ["st-1"], "station_id"),
+    ("station_information", 42, "station_id"),
+    ("weather_current", {}, "location_id"),
+    ("weather_current", {"location_id": ""}, "location_id"),
+    ("weather_current", 0, "location_id"),
+    ("weather_current", "nyc", "location_id"),
+])
+def test_an_envelope_without_its_key_id_has_no_kafka_key(event_type, payload, missing):
+    with pytest.raises(MissingKafkaKey, match=missing):
+        kafka_key(_envelope(event_type, payload))
+
+
+def test_missing_kafka_key_is_a_value_error():
+    assert issubclass(MissingKafkaKey, ValueError)

@@ -9,7 +9,7 @@ import os
 import threading
 from typing import Iterator, List, Optional, TextIO, Tuple
 
-from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, InvalidEnvelope, decode, kafka_key, utcnow
+from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, InvalidEnvelope, MissingKafkaKey, decode, kafka_key, utcnow
 
 from .config import Config
 from .sink import KafkaSink
@@ -72,7 +72,12 @@ def replay(path: str, sink: KafkaSink, cfg: Config, stop: threading.Event, speed
                 stop.wait(min((t - prev_t) / speed, max_gap_s))
             prev_t = t
             replayed = env.mark_replayed(utcnow())
-            sink.send(TOPIC_BY_EVENT_TYPE[replayed.event_type], kafka_key(replayed), replayed)
+            try:
+                key = kafka_key(replayed)
+            except MissingKafkaKey as exc:
+                log.warning("replay: skipping an envelope: %s", exc)
+                continue
+            sink.send(TOPIC_BY_EVENT_TYPE[replayed.event_type], key, replayed)
             sent += 1
             if sent % 1000 == 0:
                 sink.poll(0)

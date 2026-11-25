@@ -23,6 +23,11 @@ class InvalidEnvelope(ValueError):
         self.reasons = list(reasons)
 
 
+class MissingKafkaKey(ValueError):
+    """The envelope's payload lacks the id its Kafka key is made from (station_id or location_id).
+    Such an envelope cannot be sent: the producer skips it and logs why."""
+
+
 @dataclass(frozen=True)
 class Envelope:
     event_type: str
@@ -44,18 +49,23 @@ class Envelope:
 
 def kafka_key(envelope: Envelope) -> str:
     """The key an envelope is sent under. Live jobs and replay must agree: the station information
-    topic is compacted, so a different key for the same station would keep both versions."""
-    # A payload that is not an object still gets a key, so it is sent and lands in the downstream DLQ.
-    payload = envelope.payload if isinstance(envelope.payload, dict) else {}
+    topic is compacted, so a different key for the same station would keep both versions.
+    Raises MissingKafkaKey when the payload has no station_id / location_id to key by."""
     if envelope.event_type in ("station_status", "station_information"):
-        sid = payload.get("station_id")
-        return str(sid) if sid is not None else "_missing_station_id"   # surfaces in downstream DLQ
+        return _required_id(envelope, "station_id")
     if envelope.event_type == "weather_current":
-        location_id = payload.get("location_id")
-        return str(location_id) if location_id is not None else "_missing_location_id"
+        return _required_id(envelope, "location_id")
     if envelope.event_type == "poll_log":
-        return str(payload.get("job") or "poll_log")
+        job = envelope.payload.get("job") if isinstance(envelope.payload, dict) else None
+        return str(job or "poll_log")
     raise ValueError("no Kafka key rule for event type %r" % envelope.event_type)
+
+
+def _required_id(envelope: Envelope, field: str) -> str:
+    value = envelope.payload.get(field) if isinstance(envelope.payload, dict) else None
+    if value is None or value == "":
+        raise MissingKafkaKey("%s envelope (poll %s) has no %s" % (envelope.event_type, envelope.poll_id, field))
+    return str(value)
 
 
 def encode(envelope: Envelope) -> bytes:

@@ -140,12 +140,15 @@ def test_replay_sends_each_envelope_under_the_key_the_live_job_used(tmp_path):
                                          "weather"]
 
 
-def test_replay_keys_a_weather_envelope_without_a_location_id_as_missing(tmp_path):
+def test_replay_skips_and_logs_an_envelope_without_a_kafka_key(tmp_path, caplog):
     path = tmp_path / "sample.jsonl.gz"
-    write_capture(path, [envelope("weather_current", {"current": {"time": 1}})])
+    write_capture(path, [envelope("weather_current", {"current": {"time": 1}}),
+                         envelope("poll_log", {"job": "weather"}, poll_id="p1")])
     prod = FakeProducer()
-    replay(str(path), KafkaSink(Config(), producer=prod), Config(), threading.Event(), speed=0)
-    assert prod.sent[0][:2] == (TOPIC_WEATHER, "_missing_location_id")
+    with caplog.at_level(logging.WARNING, logger="citibike_producer.replay"):
+        n = replay(str(path), KafkaSink(Config(), producer=prod), Config(), threading.Event(), speed=0)
+    assert n == 1 and [m[0] for m in prod.sent] == [TOPIC_POLL_LOG]
+    assert any("location_id" in r.getMessage() for r in caplog.records)
 
 
 def test_unchanged_feed_is_skipped_but_logged():
@@ -192,11 +195,15 @@ def test_malformed_body_is_parse_error():
     assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["outcome"] == "parse_error"
 
 
-def test_station_without_id_is_forwarded_with_sentinel_key():
+def test_a_station_without_an_id_is_skipped_logged_and_counted_in_the_poll_log(caplog):
     prod = FakeProducer()
-    body = {"last_updated": 1, "version": "2.3", "data": {"stations": [{"num_bikes_available": 1}]}}
-    make_job(FakeClient([ok_result(body)]), prod).run_once()
-    assert by_topic(prod, TOPIC_STATUS)[0][1] == "_missing_station_id"
+    body = {"last_updated": 1, "version": "2.3", "data": {"stations": [{"num_bikes_available": 1}, station(1)]}}
+    with caplog.at_level(logging.WARNING, logger="citibike_producer.jobs"):
+        assert make_job(FakeClient([ok_result(body)]), prod).run_once() is True
+    assert [m[1] for m in by_topic(prod, TOPIC_STATUS)] == ["1"]
+    poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]
+    assert poll["outcome"] == "ok" and poll["messages_skipped"] == 1 and poll["messages_sent"] == 1
+    assert any("station_id" in r.getMessage() for r in caplog.records)
 
 
 def test_weather_job():
@@ -364,13 +371,12 @@ def test_synthetic_overwrites_an_existing_capture(tmp_path):
         assert len(fh.readlines()) == first
 
 
-def test_a_station_item_that_is_not_an_object_is_still_sent_with_sentinel_key():
+def test_a_station_item_that_is_not_an_object_is_skipped():
     prod = FakeProducer()
     body = {"last_updated": 1, "version": "2.3", "data": {"stations": ["garbage", station(1)]}}
     assert make_job(FakeClient([ok_result(body)]), prod).run_once() is True
-    msgs = by_topic(prod, TOPIC_STATUS)
-    assert [m[1] for m in msgs] == ["_missing_station_id", "1"]
-    assert msgs[0][2]["payload"] == "garbage"
+    assert [m[1] for m in by_topic(prod, TOPIC_STATUS)] == ["1"]
+    assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["messages_skipped"] == 1
 
 
 def test_weather_poll_is_keyed_by_the_configured_location_id():
@@ -381,3 +387,13 @@ def test_weather_poll_is_keyed_by_the_configured_location_id():
     (msg,) = by_topic(prod, TOPIC_WEATHER)
     assert msg[1] == "nyc-central-park"
     assert msg[2]["payload"]["location_id"] == "nyc-central-park"
+
+
+def test_a_weather_poll_without_a_location_id_sends_nothing_and_is_a_parse_error():
+    prod = FakeProducer()
+    cfg = Config(weather_location_id="")
+    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result({"current": {"time": 1760000000}})]))
+    assert job.run_once() is False
+    assert by_topic(prod, TOPIC_WEATHER) == []
+    poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]
+    assert poll["outcome"] == "parse_error" and "location_id" in poll["error"]

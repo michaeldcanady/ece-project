@@ -12,7 +12,15 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from citibike_contract import Envelope, iso_to_epoch_ms, kafka_key, parse_iso, utc_now_iso, utcnow
+from citibike_contract import (
+    Envelope,
+    MissingKafkaKey,
+    iso_to_epoch_ms,
+    kafka_key,
+    parse_iso,
+    utc_now_iso,
+    utcnow,
+)
 
 from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
 from .sink import DeliveryBatch, KafkaSink
@@ -62,7 +70,8 @@ class Job:
     def _finish(self, poll_id: str, source: str, url: Optional[str], res: Optional[FetchResult], outcome: str,
                 gbfs_version: Optional[str] = None, feed_last_updated: Optional[int] = None,
                 feed_ttl: Optional[int] = None, n_records: Optional[int] = None,
-                batch: Optional[DeliveryBatch] = None, error: Optional[str] = None) -> bool:
+                batch: Optional[DeliveryBatch] = None, error: Optional[str] = None,
+                messages_skipped: int = 0) -> bool:
         ok = outcome in _SUCCESS
         self.consecutive_failures = 0 if ok else self.consecutive_failures + 1
         self.last_outcome, self.last_error = outcome, error
@@ -80,6 +89,7 @@ class Job:
             "messages_sent": batch.sent if batch else 0,
             "messages_delivered": batch.delivered if batch else 0,
             "messages_failed": batch.failed if batch else 0,
+            "messages_skipped": messages_skipped,   # envelopes with no Kafka key, logged and not sent
             "consecutive_failures": self.consecutive_failures,
         }
         env = Envelope(event_type="poll_log", poll_id=poll_id, source=source, source_url=url or "",
@@ -134,17 +144,26 @@ class GbfsStationJob(Job):
         batch = DeliveryBatch()
         ts = iso_to_epoch_ms(res.fetched_at)
         fetched_at = parse_iso(res.fetched_at)
+        skipped = 0
         for st in stations:
             env = Envelope(event_type=self.event_type, poll_id=poll_id, source=SOURCE_GBFS, source_url=url,
                            gbfs_version=version, feed_last_updated=last_updated, fetched_at=fetched_at,
                            producer_version=self.cfg.producer_version, payload=st)
-            self.sink.send(self.topic, kafka_key(env), env, batch, ts)
+            try:
+                key = kafka_key(env)
+            except MissingKafkaKey as exc:
+                log.warning("%s: skipping a station: %s", self.name, exc)
+                skipped += 1
+                continue
+            self.sink.send(self.topic, key, env, batch, ts)
         remaining = self.sink.flush(15.0)
         if batch.failed == 0 and remaining == 0:
             self._last_feed_updated = last_updated
-            return self._finish(poll_id, SOURCE_GBFS, url, res, OUTCOME_OK, batch=batch, **common)
+            return self._finish(poll_id, SOURCE_GBFS, url, res, OUTCOME_OK, batch=batch,
+                                messages_skipped=skipped, **common)
         err = batch.last_error or "%d messages undelivered after flush" % remaining
-        return self._finish(poll_id, SOURCE_GBFS, url, res, OUTCOME_KAFKA, batch=batch, error=err, **common)
+        return self._finish(poll_id, SOURCE_GBFS, url, res, OUTCOME_KAFKA, batch=batch, error=err,
+                            messages_skipped=skipped, **common)
 
 
 class WeatherJob(Job):
@@ -181,8 +200,13 @@ class WeatherJob(Job):
         env = Envelope(event_type="weather_current", poll_id=poll_id, source=SOURCE_WEATHER, source_url=res.url,
                        gbfs_version=None, feed_last_updated=obs_time, fetched_at=parse_iso(res.fetched_at),
                        producer_version=self.cfg.producer_version, payload=payload)
+        try:
+            key = kafka_key(env)
+        except MissingKafkaKey as exc:
+            return self._finish(poll_id, SOURCE_WEATHER, res.url, res, OUTCOME_PARSE, error=str(exc),
+                                messages_skipped=1, **common)
         batch = DeliveryBatch()
-        self.sink.send(TOPIC_WEATHER, kafka_key(env), env, batch, iso_to_epoch_ms(res.fetched_at))
+        self.sink.send(TOPIC_WEATHER, key, env, batch, iso_to_epoch_ms(res.fetched_at))
         remaining = self.sink.flush(15.0)
         if batch.failed == 0 and remaining == 0:
             self._last_feed_updated = obs_time

@@ -9,6 +9,7 @@ from citibike_contract import (
     TOPIC_POLL_LOG,
     TOPIC_STATUS,
     TOPIC_WEATHER,
+    MissingKafkaKey,
     decode,
     kafka_key,
 )
@@ -86,7 +87,10 @@ def load_capture(path, partitions=3):
             value = line.strip().encode()
             env = decode(value)
             topic = TOPIC_BY_EVENT_TYPE[env.event_type]
-            key = kafka_key(env)
+            try:
+                key = kafka_key(env)
+            except MissingKafkaKey:
+                continue   # replay would skip it too
             part = zlib.crc32(key.encode()) % partitions if topic == TOPIC_STATUS else 0
             fc.append(topic, part, key, value, ts=0)
     return fc
