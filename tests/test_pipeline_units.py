@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from citibike_contract import TOPIC_STATUS, Envelope
-from citibike_contract.envelope import encode
+from citibike_contract import TOPIC_STATUS, Envelope, encode
 from citibike_pipeline.batch import parse_records
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import Record

@@ -20,8 +20,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pyarrow as pa
 
-from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, decode
-from citibike_contract.envelope import InvalidEnvelope
+from citibike_contract import EVENT_TYPE_BY_TOPIC, Envelope, InvalidEnvelope, decode
 
 from . import lake
 from .config import DATA_TOPICS, PipelineConfig

@@ -6,8 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from citibike_contract import decode
-from citibike_contract.envelope import InvalidEnvelope
+from citibike_contract import InvalidEnvelope, decode
 
 from . import lake
 from .config import TOPIC_INFO, PipelineConfig
@@ -34,11 +33,8 @@ def build_dim_station(reader: KafkaBatchReader, storage: Storage, cfg: PipelineC
         except InvalidEnvelope:
             rejected += 1
             continue
-        if env.event_type != "station_information":
-            rejected += 1
-            continue
         p = env.payload
-        if validate_station_info_payload(p):
+        if env.event_type != "station_information" or validate_station_info_payload(p):
             rejected += 1
             continue
         latest[p["station_id"]] = {

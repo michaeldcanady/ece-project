@@ -3,8 +3,15 @@ import gzip
 import zlib
 from types import SimpleNamespace
 
-from citibike_contract import TOPIC_BY_EVENT_TYPE, TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, decode
-from citibike_contract.envelope import kafka_key
+from citibike_contract import (
+    TOPIC_BY_EVENT_TYPE,
+    TOPIC_INFO,
+    TOPIC_POLL_LOG,
+    TOPIC_STATUS,
+    TOPIC_WEATHER,
+    decode,
+    kafka_key,
+)
 
 
 class FakeMessage:
@@ -76,9 +83,10 @@ def load_capture(path, partitions=3):
     fc = FakeConsumer(partitions={TOPIC_STATUS: partitions, TOPIC_WEATHER: 1, TOPIC_POLL_LOG: 1, TOPIC_INFO: 1})
     with gzip.open(path, "rt") as fh:
         for line in fh:
-            env = decode(line.strip().encode())
+            value = line.strip().encode()
+            env = decode(value)
             topic = TOPIC_BY_EVENT_TYPE[env.event_type]
             key = kafka_key(env)
             part = zlib.crc32(key.encode()) % partitions if topic == TOPIC_STATUS else 0
-            fc.append(topic, part, key, line.strip().encode(), ts=0)
+            fc.append(topic, part, key, value, ts=0)
     return fc

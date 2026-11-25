@@ -168,7 +168,7 @@ Replay into a clean lake. Serving time never moves backwards, so replaying older
 ## Project layout
 
 ```
-citibike_contract/   topic names, event types, envelope schema version, timestamp format (stdlib only)
+citibike_contract/   topic names, event types, timestamp format, and the envelope (encode, decode, Kafka key); stdlib only
 citibike_producer/   ingest library: polling jobs, Kafka sink, replay, synthetic capture, topic creation
 citibike_pipeline/   processing library: micro-batch, metrics, validation, storage, lake tables and compaction, quality
 dags/                thin DAGs that call the libraries; shared settings in dags/_common.py

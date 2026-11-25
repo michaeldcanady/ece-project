@@ -3,8 +3,7 @@ import json
 import logging
 import threading
 
-from citibike_contract import Envelope, parse_iso
-from citibike_contract.envelope import encode
+from citibike_contract import Envelope, encode, parse_iso
 from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
 from citibike_producer.jobs import GbfsStationJob, WeatherJob
 from citibike_producer.replay import replay
@@ -363,3 +362,22 @@ def test_synthetic_overwrites_an_existing_capture(tmp_path):
     generate(path, stations=8, minutes=2)
     with gzip.open(path, "rt") as fh:
         assert len(fh.readlines()) == first
+
+
+def test_a_station_item_that_is_not_an_object_is_still_sent_with_sentinel_key():
+    prod = FakeProducer()
+    body = {"last_updated": 1, "version": "2.3", "data": {"stations": ["garbage", station(1)]}}
+    assert make_job(FakeClient([ok_result(body)]), prod).run_once() is True
+    msgs = by_topic(prod, TOPIC_STATUS)
+    assert [m[1] for m in msgs] == ["_missing_station_id", "1"]
+    assert msgs[0][2]["payload"] == "garbage"
+
+
+def test_weather_poll_is_keyed_by_the_configured_location_id():
+    prod = FakeProducer()
+    cfg = Config(weather_location_id="nyc-central-park")
+    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result({"current": {"time": 1760000000}})]))
+    assert job.run_once() is True
+    (msg,) = by_topic(prod, TOPIC_WEATHER)
+    assert msg[1] == "nyc-central-park"
+    assert msg[2]["payload"]["location_id"] == "nyc-central-park"

@@ -6,8 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fakes import load_capture
 
-from citibike_contract import TOPIC_STATUS, Envelope, parse_iso
-from citibike_contract.envelope import encode
+from citibike_contract import TOPIC_STATUS, Envelope, encode, parse_iso
 from citibike_pipeline import batch, lake
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_io import KafkaBatchReader

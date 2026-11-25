@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from citibike_contract import Envelope, decode
-from citibike_contract.envelope import InvalidEnvelope, encode, kafka_key
+from citibike_contract import Envelope, InvalidEnvelope, decode, encode, kafka_key
 
 SAMPLE = os.path.join(os.path.dirname(__file__), "..", "data", "sample", "sample_capture.jsonl.gz")
 
@@ -113,6 +112,15 @@ def test_a_replayed_envelope_round_trips_keeping_its_fetch_time_and_the_original
     assert back.replay is True and back.replayed_at == REPLAYED and back.fetched_at == FETCHED
 
 
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("replayed_at", [None, ""])
+def test_an_absent_replayed_at_decodes_as_none(replay, replayed_at):
+    # Old-format retained envelopes carry "replay":false/true with "replayed_at":null; the old pipeline
+    # also treated an empty string as absent.
+    env = decode(_wire(replay=replay, replayed_at=replayed_at))
+    assert env.replay is replay and env.replayed_at is None
+
+
 def test_an_unknown_top_level_field_is_dropped_on_decode():
     env = decode(_wire(added_by_a_newer_producer={"x": 1}))
     assert encode(env) == json.dumps(GOOD, separators=(",", ":")).encode("utf-8")
@@ -127,6 +135,12 @@ def test_an_unknown_top_level_field_is_dropped_on_decode():
     ("weather_current", {"location_id": "nyc"}, "nyc"),
     ("weather_current", {}, "_missing_location_id"),
     ("poll_log", {"job": "station_status"}, "station_status"),
+    ("station_status", "not a station", "_missing_station_id"),
+    ("station_status", ["st-1"], "_missing_station_id"),
+    ("station_information", 42, "_missing_station_id"),
+    ("weather_current", 0, "_missing_location_id"),
+    ("weather_current", "nyc", "_missing_location_id"),
+    ("poll_log", ["station_status"], "poll_log"),
 ])
 def test_kafka_key_for_each_event_type(event_type, payload, key):
     assert kafka_key(_envelope(event_type, payload)) == key

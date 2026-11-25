@@ -6,8 +6,7 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from citibike_contract import Envelope
-from citibike_contract.envelope import encode
+from citibike_contract import Envelope, encode
 
 from .config import Config
 

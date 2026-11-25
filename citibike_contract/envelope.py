@@ -45,7 +45,8 @@ class Envelope:
 def kafka_key(envelope: Envelope) -> str:
     """The key an envelope is sent under. Live jobs and replay must agree: the station information
     topic is compacted, so a different key for the same station would keep both versions."""
-    payload = envelope.payload
+    # A payload that is not an object still gets a key, so it is sent and lands in the downstream DLQ.
+    payload = envelope.payload if isinstance(envelope.payload, dict) else {}
     if envelope.event_type in ("station_status", "station_information"):
         sid = payload.get("station_id")
         return str(sid) if sid is not None else "_missing_station_id"   # surfaces in downstream DLQ
@@ -102,7 +103,7 @@ def decode(value: Optional[bytes]) -> Envelope:
     if fetched_at is None:
         errors.append("bad_fetched_at")
     replayed_at = None
-    if env.get("replayed_at") is not None:
+    if env.get("replayed_at") not in (None, ""):   # null or "" means not replayed
         replayed_at = _parse_timestamp(env["replayed_at"])
         if replayed_at is None:
             errors.append("bad_replayed_at")

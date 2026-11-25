@@ -51,4 +51,4 @@ def iso_to_epoch_ms(value: str) -> int:
 
 
 # Re-exported last: the envelope module reads the names above.
-from citibike_contract.envelope import Envelope, decode  # noqa: E402, F401
+from citibike_contract.envelope import Envelope, InvalidEnvelope, decode, encode, kafka_key  # noqa: E402, F401

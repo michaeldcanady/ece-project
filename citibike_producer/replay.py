@@ -9,8 +9,7 @@ import os
 import threading
 from typing import Iterator, List, Optional, TextIO, Tuple
 
-from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, decode, utcnow
-from citibike_contract.envelope import InvalidEnvelope, kafka_key
+from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, InvalidEnvelope, decode, kafka_key, utcnow
 
 from .config import Config
 from .sink import KafkaSink

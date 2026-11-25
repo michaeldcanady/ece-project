@@ -12,8 +12,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from citibike_contract import Envelope, iso_to_epoch_ms, parse_iso, utc_now_iso
-from citibike_contract.envelope import kafka_key
+from citibike_contract import Envelope, iso_to_epoch_ms, kafka_key, parse_iso, utc_now_iso, utcnow
 
 from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
 from .sink import DeliveryBatch, KafkaSink
@@ -85,7 +84,7 @@ class Job:
         }
         env = Envelope(event_type="poll_log", poll_id=poll_id, source=source, source_url=url or "",
                        gbfs_version=gbfs_version, feed_last_updated=feed_last_updated,
-                       fetched_at=parse_iso(res.fetched_at if res and res.fetched_at else utc_now_iso()),
+                       fetched_at=parse_iso(res.fetched_at) if res and res.fetched_at else utcnow(),
                        producer_version=self.cfg.producer_version, payload=payload)
         self.sink.send(TOPIC_POLL_LOG, kafka_key(env), env)
         level = logging.INFO if ok else logging.WARNING
