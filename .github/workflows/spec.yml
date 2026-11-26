@@ -1,0 +1,120 @@
+name: spec
+
+# Adding the `agent:spec` label to an issue expands its short note into a full spec (Problem, Files, Proposal,
+# Benefits, Tests, Acceptance criteria, Out of scope) and replaces the issue body, keeping the note under
+# "Original note". Nothing is implemented. Add `agent:implement` afterwards.
+#
+# Same split as improve.yml: the agent job is read-only and holds only the OAuth token; a separate job with
+# `issues: write` applies the result.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  fetch:
+    if: github.event.label.name == 'agent:spec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: read
+    steps:
+      # The issue text is untrusted input: it goes to a JSON file, never into shell or `${{ }}`.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/issue"
+          gh issue view "$ISSUE_NUMBER" --json title,body,comments > "$RUNNER_TEMP/issue/issue.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue
+          path: ${{ runner.temp }}/issue/issue.json
+
+  scan:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: spec-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+      - run: mise run sync
+      - run: |
+          npm ci --prefix .sandcastle
+          npm install -g @anthropic-ai/claude-code
+      - uses: actions/download-artifact@v4
+        with:
+          name: issue
+          path: ${{ runner.temp }}/issue
+      - name: Expand the note
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUE_FILE: ${{ runner.temp }}/issue/issue.json
+          OUTPUT_DIR: ${{ runner.temp }}/out
+        run: npx --prefix .sandcastle tsx .sandcastle/spec/spec.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spec
+          path: ${{ runner.temp }}/out/spec.json
+
+  apply:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
+      - uses: actions/download-artifact@v4
+        with:
+          name: issue
+          path: ${{ runner.temp }}/issue
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: ${{ runner.temp }}/spec
+      - name: Replace the issue body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_FILE: ${{ runner.temp }}/issue/issue.json
+          SPEC_DIR: ${{ runner.temp }}/spec
+        run: npx --prefix .sandcastle tsx .sandcastle/spec/apply.ts
+
+  blocked:
+    needs: [fetch, scan, apply]
+    if: always() && needs.fetch.result != 'skipped' && (needs.fetch.result == 'failure' || needs.scan.result == 'failure' || needs.apply.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:spec || true
+          gh issue comment "$ISSUE_NUMBER" --body "The spec run failed, so the issue is unchanged. See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID"

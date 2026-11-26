@@ -31,7 +31,10 @@ try {
     maxIterations: 1,
     idleTimeoutSeconds: 900,
     promptFile: here("prompt.md"),
-    promptArgs: { ALREADY_FILED: alreadyFiled },
+    promptArgs: {
+      ALREADY_FILED: alreadyFiled,
+      SPEC_FORMAT: fs.readFileSync(path.join(import.meta.dirname, "../shared/spec-format.md"), "utf8"),
+    },
     output: sandcastle.Output.object({ tag: "output", schema: planSchema }),
     extractionPrompt: fs.readFileSync(here("extraction.md"), "utf8"),
     maxRetries: 1,
