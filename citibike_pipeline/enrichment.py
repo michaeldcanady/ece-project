@@ -1,5 +1,6 @@
 """Enrichment: the flags, dimension join and weather as-of join that turn a Batch's station statuses into curated
-status rows. Pure: values in, values out. `batch.process_batch` does the lake reads and writes around it.
+status rows. Pure: values in, values out. `enrichment_context.EnrichmentContext` does the lake reads it needs, and
+`batch.process_batch` the writes.
 """
 from __future__ import annotations
 
