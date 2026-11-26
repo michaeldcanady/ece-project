@@ -5,9 +5,12 @@ __pycache__/
 .env
 .devcontainer/.env
 
-# Runtime output stays local; only the replay sample and the .gitkeep placeholders are committed.
-data/*
+# Runtime output stays local; only the synthetic replay sample and the .gitkeep placeholders are committed.
+# A real capture (capture:export-real) is data too: it stays local.
+data/**
 !data/sample/
+data/sample/**
+!data/sample/sample_capture.jsonl.gz
 logs/*
 !**/.gitkeep
 
