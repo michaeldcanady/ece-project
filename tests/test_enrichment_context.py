@@ -144,4 +144,5 @@ def test_read_is_idempotent(tmp_path):
     lake.CURATED_STATUS.write(storage, "b0", [prior_status(STATUS_AT - timedelta(minutes=5), 100, offset=0)])
     lake.CURATED_WEATHER.write(storage, "b0", [prior_weather(STATUS_AT - timedelta(minutes=20), offset=0)])
     batch = decode([status_record(), weather_record()])
-    assert EnrichmentContext.read(storage, batch, BATCH_ID, CFG) == EnrichmentContext.read(storage, batch, BATCH_ID, CFG)
+    first = EnrichmentContext.read(storage, batch, BATCH_ID, CFG)
+    assert EnrichmentContext.read(storage, batch, BATCH_ID, CFG) == first

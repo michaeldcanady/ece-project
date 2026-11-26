@@ -37,8 +37,9 @@ class EnrichmentContext:
         status_times = [d.envelope.fetched_at for d in decoded.status]
         all_times = status_times + [d.envelope.fetched_at for d in decoded.weather] + [as_of]
         ctx_end = min(status_times) if status_times else as_of
-        prior = lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
-                                                _STATUS_CONTEXT_COLS, exclude_batch=batch_id) if decoded.status else None
+        prior = (lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
+                                                 _STATUS_CONTEXT_COLS, exclude_batch=batch_id)
+                 if decoded.status else None)
         # Weather from earlier batches can be newer than this batch's first status row (partitions drain at
         # different speeds), so read it up to the newest time seen here.
         prior_weather = lake.CURATED_WEATHER.read_window(storage, ctx_end - _WEATHER_LOOKBACK,
