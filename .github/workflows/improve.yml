@@ -3,12 +3,11 @@ name: improve
 # Nightly architecture scan: find deepening opportunities, spec each one, file it as an issue labeled
 # `agent:candidate`. Nothing is implemented here; a human adds `agent:implement` to start implement.yml.
 #
-# The schedule is committed disabled. Run it by hand first (Actions > improve > Run workflow, dry run on), read the
-# summary, then uncomment the `schedule` lines.
+# Runs nightly at 06:00 UTC. To try a change by hand: Actions > improve > Run workflow, with dry run on.
 
 on:
-  # schedule:
-  #   - cron: "0 6 * * *" # 06:00 UTC daily
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
   workflow_dispatch:
     inputs:
       dry_run:
