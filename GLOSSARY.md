@@ -74,6 +74,11 @@ The station states, windows and system availability computed for one batch at on
 is a value; publishing it is what writes the serving files.
 _Avoid_: metrics (that names the individual measures), report
 
+**Live check**:
+A run against the running stack's real data that reprocesses Kafka's retained messages into a separate lake and
+reports, per check, whether the cleaning and the serving files hold. It reads the live lake and never writes it.
+_Avoid_: smoke test, integration test (the in-memory run over a synthetic capture is the end-to-end test)
+
 ## The wire contract
 
 **Envelope**:

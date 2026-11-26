@@ -128,6 +128,7 @@ capture before submitting.**
 ```bash
 mise run kafka:replay         # replay the committed sample through Kafka at 60x (citibike_replay DAG)
 mise run capture:synthetic    # regenerate the synthetic sample
+mise run capture:export-real  # export the newest 45 minutes of real Kafka data to data/sample/real_capture.jsonl.gz
 ```
 
 To record a **real** capture:
@@ -183,6 +184,8 @@ The libraries import nothing from Airflow, so all the processing logic can be te
 
 ```bash
 mise run test       # all tests; no broker or network needed
+mise run e2e:live   # needs the running stack: reprocess Kafka's real messages into a temp lake and check the cleaning,
+                    # the serving files, latency and poll continuity (report in /tmp/e2e_live_report.md)
 mise run lint       # ruff
 mise run sync       # install the locked dependencies (the dev container does this on create)
 mise run lock       # re-resolve uv.lock after changing dependencies in pyproject.toml
