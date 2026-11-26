@@ -51,6 +51,10 @@ run = "uv run citibike-sample data/sample/sample_capture.jsonl.gz --start 2026-1
 description = "Export the newest 45 minutes of real Kafka data as data/sample/real_capture.jsonl.gz (needs the running stack)"
 run = "uv run python scripts/export_real_capture.py"
 
+[tasks."qlik:export"]
+description = "Export the lake's serving tables as CSVs in data/qlik_export/ to upload to Qlik Cloud"
+run = "uv run python scripts/export_qlik_csv.py"
+
 [tasks."kafka:replay"]
 description = "Replay the committed sample through Kafka at 60x (citibike_replay DAG)"
 run = "mise run dag:trigger citibike_replay '{\"speed\": 60}'"
