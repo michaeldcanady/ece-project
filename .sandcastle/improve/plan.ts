@@ -1,6 +1,5 @@
 import { z } from "zod";
-
-export const STRENGTHS = ["strong", "explore", "speculative"] as const;
+import { STRENGTHS } from "../shared/candidate-labels";
 
 /** One architecture candidate, specced: the issue body IS the spec. */
 export const candidateSchema = z.object({
