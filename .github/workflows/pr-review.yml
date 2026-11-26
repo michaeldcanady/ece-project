@@ -1,0 +1,116 @@
+name: pr-review
+
+# Reviews a pull request on every push to it: one COMMENT review with inline comments, and a reply plus resolve for
+# each earlier thread of its own that the new code addresses. Never approves or requests changes.
+#
+# Same split as spec.yml: `fetch` reads GitHub, `review` runs the model with only the OAuth token, and `post` holds
+# the write token and runs no model. Drafts and fork PRs are skipped (forks get no secrets).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
+      # The PR text is untrusted: fetch.ts writes it to a JSON file, never into shell or `${{ }}`.
+      - name: Snapshot the PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUTPUT_DIR: ${{ runner.temp }}/context
+        run: npx --prefix .sandcastle tsx .sandcastle/pr-review/fetch.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: context
+          path: ${{ runner.temp }}/context/context.json
+
+  review:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          npm ci --prefix .sandcastle
+          npm install -g @anthropic-ai/claude-code
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+          path: ${{ runner.temp }}/context
+      - name: Review the diff
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CONTEXT_DIR: ${{ runner.temp }}/context
+          OUTPUT_DIR: ${{ runner.temp }}/out
+        run: npx --prefix .sandcastle tsx .sandcastle/pr-review/review.ts
+      # review.json is absent when this head was already reviewed.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review
+          path: ${{ runner.temp }}/out/review.json
+          if-no-files-found: ignore
+
+  post:
+    needs: review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # GitHub requires contents: write for the resolveReviewThread mutation; pull-requests: write alone is refused.
+      # This job runs no model, and its only writes are the review, its replies, resolving threads and the door label (created if missing).
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
+      - uses: actions/download-artifact@v4
+        with:
+          name: context
+          path: ${{ runner.temp }}/context
+      - uses: actions/download-artifact@v4
+        with:
+          name: review
+          path: ${{ runner.temp }}/review
+        continue-on-error: true
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CONTEXT_DIR: ${{ runner.temp }}/context
+          REVIEW_DIR: ${{ runner.temp }}/review
+        run: npx --prefix .sandcastle tsx .sandcastle/pr-review/apply.ts

@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { execFileSync } from "node:child_process";
-import { planSchema, STRENGTHS } from "./plan";
+import { planSchema } from "./plan";
+import { CANDIDATE_LABEL, ensureCandidateLabels, strengthLabel } from "../shared/candidate-labels";
 import { required } from "../shared/common";
 
 /**
@@ -35,12 +36,7 @@ if (plan.candidates.length === 0) {
   process.exit(0);
 }
 
-if (!dryRun) {
-  gh(["label", "create", "agent:candidate", "--force", "--description", "Architecture candidate filed by the nightly run"]);
-  for (const s of STRENGTHS) {
-    gh(["label", "create", `strength:${s}`, "--force"]);
-  }
-}
+if (!dryRun) ensureCandidateLabels(gh);
 
 for (const c of plan.candidates) {
   if (c.strength === "speculative") continue;
@@ -59,8 +55,8 @@ for (const c of plan.candidates) {
     "issue", "create",
     "--title", c.title,
     "--body-file", file,
-    "--label", "agent:candidate",
-    "--label", `strength:${c.strength}`,
+    "--label", CANDIDATE_LABEL,
+    "--label", strengthLabel(c.strength),
   ]).trim();
   note(`Filed ${url}`);
 

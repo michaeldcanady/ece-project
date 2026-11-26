@@ -6,7 +6,8 @@ Read during review. Each rule says what good looks like; `mise run lint` already
 
 Every value gets its exact type, or a custom class written for it. `scripts/check_strong_types.py` rejects
 `Any`, `typing.Dict` and the builtin `dict` in annotations; files written before the rule may only lower their
-count in its `BASELINE`. Review for what the check cannot see:
+count in its `BASELINE`. `scripts/check_mypy.py` runs mypy with a per-file error baseline that only shrinks, so
+annotations are checked against the code that uses them. Review for what the checks cannot see:
 
 - **Records are classes.** A value with named fields (a parsed JSON object, a step record, a function's
   options) is a frozen `@dataclass`. A `TypedDict` fits only where the value must stay a real `dict`, such as

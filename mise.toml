@@ -79,9 +79,13 @@ run = "bash .sandcastle/setup.sh"
 description = "Typecheck the TypeScript agent workflows in .sandcastle/ (installs their locked dependencies first)"
 run = ["npm ci --prefix .sandcastle --no-audit --no-fund", "npm run --prefix .sandcastle typecheck"]
 
+[tasks."test:agent"]
+description = "Unit tests for the agent workflows in .sandcastle/ (run after typecheck:agent has installed the dependencies)"
+run = "npm run --prefix .sandcastle test"
+
 [tasks.lint]
-description = "Lint: ruff, the strong-types and layer checks, then actionlint on the workflows"
-run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_layers.py", "actionlint"]
+description = "Lint: ruff, the strong-types, mypy, layer and agent-label checks, then actionlint on the workflows"
+run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_mypy.py", "uv run python scripts/check_layers.py", "uv run python scripts/check_agent_labels.py", "actionlint"]
 
 [tasks.test]
 description = "Run the tests (no network or broker needed)"
@@ -89,7 +93,7 @@ run = "uv run pytest -v"
 
 [tasks.check]
 description = "Everything CI and the pre-commit hook run: lint, the agent typecheck, then tests"
-run = ["mise run lint", "mise run typecheck:agent", "uv run pytest -q -rs"]
+run = ["mise run lint", "mise run typecheck:agent", "mise run test:agent", "uv run pytest -q -rs"]
 
 [tasks."smoke:replay"]
 description = "Replay the committed sample through the running stack"

@@ -16,10 +16,18 @@ Python project; `mise run typecheck:agent` checks it and runs as part of `mise r
 
 A thin issue (a short note, such as a migrated backlog entry) is not implementable. Adding `agent:spec` runs
 `.github/workflows/spec.yml`, which expands it into the full spec and replaces the issue body, keeping the note
-under "Original note". `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
+under "Original note". It also rates the spec and labels the issue `agent:candidate` plus one `strength:*`, so a
+specced issue joins the backlog and the scan's dedupe. It never adds `agent:implement`: its job holds only
+`GITHUB_TOKEN`, and a human decides. `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
 `agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
 
-Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
+A pull request is reviewed by `.github/workflows/pr-review.yml` on every push to it, in three jobs like `spec.yml`
+(`fetch` reads, `review` runs the model with only the OAuth token, `post` writes). It posts one `COMMENT` review with
+inline comments, and replies to and resolves its own earlier threads that the new code addresses. It never approves or
+requests changes, and it skips drafts and fork PRs. Each review labels the PR `door:one-way` or `door:two-way`. Which writes are allowed is decided in one pure
+module, `pr-review/review-actions.ts`.
+
+Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
 
 ## Facts a file will not tell you
 
@@ -33,6 +41,10 @@ Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-p
 - DAG tests skip on the runner (no Airflow container); the PR body says so.
 - The scan dedupes against every existing `agent:candidate` issue, open or closed, by title and by the files its
   `## Files` section names.
+- The PR reviewer posts as `github-actions[bot]`, a shared author, so it recognises its own threads by the
+  `REVIEW_MARKER` comment in the body. A head sha it already reviewed (`sha=<sha>` in a marked review) is skipped.
+- The `post` job of `pr-review.yml` has `contents: write` only because resolving a review thread needs it.
+- `pr-review.yml` and `.sandcastle/pr-review/` are covered by `PROTECTED`, so a human must change them.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 
 ## Setup
