@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { reviewContextSchema } from "./review-context";
+import { ensureDoorLabels } from "./door";
 import { reviewSchema } from "./review-plan";
 import { botRepliedLast, planActions, reviewedShasOf } from "./review-actions";
 import { gh, readReviews, readThreadComments } from "./github-reads";
@@ -9,9 +10,9 @@ import { required } from "../shared/common";
 
 /**
  * The GitHub adapter on the way out, and the only step with write access. Both artifacts crossed a job boundary, so
- * they are parsed again. Labels the PR with its door, replies to and resolves the threads the planner allows, then posts one COMMENT review (never
- * an approval or a request for changes). The review goes last because it marks the head as reviewed: if it exists,
- * everything before it succeeded, so a rerun cannot repeat or skip any write.
+ * they are parsed again. Replies to and resolves the threads the planner allows, labels the PR with its door, then
+ * posts one COMMENT review (never an approval or a request for changes). The review goes last because it marks the
+ * head as reviewed: if it exists, everything before it succeeded, so a rerun cannot repeat or skip any write.
  */
 
 const reviewFile = path.join(required("REVIEW_DIR"), "review.json");
@@ -52,6 +53,7 @@ for (const r of actions.resolutions) {
 }
 
 // Idempotent, so a rerun is harmless; before the review, which marks the head as reviewed.
+ensureDoorLabels(gh);
 gh(["pr", "edit", String(context.pr), "--add-label", actions.door.add, "--remove-label", actions.door.remove]);
 console.log(`Labelled the PR ${actions.door.add}.`);
 
