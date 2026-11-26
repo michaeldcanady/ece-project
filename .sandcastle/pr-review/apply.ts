@@ -4,13 +4,15 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { reviewContextSchema } from "./review-context";
 import { reviewSchema } from "./review-plan";
-import { alreadyReviewed, planActions } from "./review-actions";
+import { z } from "zod";
+import { planActions, reviewedShasOf } from "./review-actions";
 import { required } from "../shared/common";
 
 /**
  * The GitHub adapter on the way out, and the only step with write access. Both artifacts crossed a job boundary, so
- * they are parsed again. Posts one COMMENT review (never an approval or a request for changes), then replies to and
- * resolves the threads the planner allows.
+ * they are parsed again. Resolves and replies to the threads the planner allows, then posts one COMMENT review (never
+ * an approval or a request for changes). The review goes last because it marks the head as reviewed: if it exists,
+ * everything before it succeeded, so a rerun cannot repeat or skip any write.
  */
 
 const gh = (args: string[]): string =>
@@ -34,12 +36,27 @@ if (live !== context.headSha) {
   process.exit(0);
 }
 
-if (alreadyReviewed(context)) {
+// The snapshot predates this job, so a rerun of only this job must look at the reviews as they are now.
+const reviewsSchema = z.array(z.array(z.object({ body: z.string().nullable(), user: z.object({ login: z.string() }).nullable() })));
+const liveReviews = reviewsSchema
+  .parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${context.pr}/reviews`])))
+  .flat();
+if (reviewedShasOf(liveReviews.map((r) => ({ author: r.user?.login ?? "ghost", body: r.body ?? "" }))).includes(context.headSha)) {
   console.log(`Head ${context.headSha} already has a review; posting nothing.`);
   process.exit(0);
 }
 
 const actions = planActions(review, context);
+
+const RESOLVE = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`;
+for (const r of actions.resolutions) {
+  // Resolve first: a failure here leaves no reply behind for a rerun to repeat.
+  gh(["api", "graphql", "-f", `query=${RESOLVE}`, "-F", `id=${r.threadId}`]);
+  if (r.reply !== null) {
+    gh(["api", `repos/${repo}/pulls/${context.pr}/comments/${r.firstCommentId}/replies`, "--method", "POST", "-f", `body=${r.reply}`]);
+  }
+  console.log(`Resolved thread ${r.threadId}.`);
+}
 
 const payload = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-")), "review.json");
 fs.writeFileSync(
@@ -53,13 +70,3 @@ fs.writeFileSync(
 );
 gh(["api", `repos/${repo}/pulls/${context.pr}/reviews`, "--method", "POST", "--input", payload]);
 console.log(`Posted a review with ${actions.inline.length} inline comments.`);
-
-const RESOLVE = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`;
-for (const r of actions.resolutions) {
-  // Resolve first: a failure here leaves no reply behind for a rerun to repeat.
-  gh(["api", "graphql", "-f", `query=${RESOLVE}`, "-F", `id=${r.threadId}`]);
-  if (r.reply !== null) {
-    gh(["api", `repos/${repo}/pulls/${context.pr}/comments/${r.firstCommentId}/replies`, "--method", "POST", "-f", `body=${r.reply}`]);
-  }
-  console.log(`Resolved thread ${r.threadId}.`);
-}
