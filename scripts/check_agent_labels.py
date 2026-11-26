@@ -2,9 +2,9 @@
 
 Two kinds of string have to agree, and nothing else checks that they do:
 
-- **Labels.** Every `agent:*` or `strength:*` label a workflow or a `.sandcastle/` TypeScript file uses must be
-  created by the `"name|description|color"` list in `.sandcastle/setup.sh`: `gh issue edit --add-label` fails on a
-  label that does not exist.
+- **Labels.** Every `agent:*`, `strength:*` or `door:*` label a workflow or a `.sandcastle/` TypeScript file uses
+  must be created by the `"name|description|color"` list in `.sandcastle/setup.sh`: `gh issue edit --add-label`
+  fails on a label that does not exist.
 - **The spec heading.** The heading the implement guard (`implement.yml`) and the spec schema (`spec-plan.ts`) require
   must be one of the headings `spec-format.md` defines, or the guard blocks every issue and the schema rejects every
   spec.
@@ -27,8 +27,8 @@ HEADING_USERS: Tuple[Tuple[str, Pattern[str]], ...] = (
     (".github/workflows/implement.yml", re.compile(r'contains\("(##[^"]+)"\)')),
 )
 
-LABEL = re.compile(r"\b(?:agent:[a-z-]+|strength:[a-z]+)")
-CREATED = re.compile(r'"((?:agent|strength):[a-z-]+)\|[^|"]*\|[0-9a-fA-F]{6}"')
+LABEL = re.compile(r"\b(?:agent:[a-z-]+|strength:[a-z]+|door:[a-z-]+)")
+CREATED = re.compile(r'"((?:agent|strength|door):[a-z-]+)\|[^|"]*\|[0-9a-fA-F]{6}"')
 FORMAT_HEADING = re.compile(r"`(##[^`]+)`")
 
 
