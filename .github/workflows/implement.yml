@@ -106,6 +106,14 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           set -euo pipefail
+          # Carry main's current workflow files: a PAT without `workflow` scope cannot push a branch whose
+          # .github/workflows/ differs from main's. The agent cannot touch .github/, so only other files can conflict.
+          git fetch "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" main
+          if ! git merge --no-edit FETCH_HEAD; then
+            git merge --abort
+            echo "main moved under the branch and the merge conflicts with the agent's changes. Re-add agent:implement to run again on the current main." > "$OUT/failure_reason.txt"
+            exit 1
+          fi
           if ! git push "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}" 2> "$OUT/push_err.txt"; then
             { echo "The push was rejected:"; cat "$OUT/push_err.txt"; } > "$OUT/failure_reason.txt"
             cat "$OUT/push_err.txt"
