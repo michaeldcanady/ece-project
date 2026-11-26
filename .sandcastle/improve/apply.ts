@@ -14,8 +14,12 @@ import { required } from "../shared/common";
 const dryRun = process.env.DRY_RUN === "true";
 const summary = process.env.GITHUB_STEP_SUMMARY;
 
-const gh = (args: string[]): string =>
-  execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+const gh = (args: string[], token?: string): string =>
+  execFileSync("gh", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+    env: token === undefined ? process.env : { ...process.env, GH_TOKEN: token },
+  });
 
 const plan = planSchema.parse(
   JSON.parse(fs.readFileSync(path.join(required("PLAN_DIR"), "plan.json"), "utf8")),
@@ -41,11 +45,16 @@ if (!dryRun) {
 for (const c of plan.candidates) {
   if (c.strength === "speculative") continue;
   if (dryRun) {
-    note(`### [dry run] ${c.title} (strength:${c.strength})\n\n${c.body}\n`);
+    const auto = c.strength === "strong" ? " and would be labeled agent:implement" : "";
+    note(`### [dry run] ${c.title} (strength:${c.strength}${auto})\n\n${c.body}\n`);
     continue;
   }
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "issue-")), "body.md");
-  fs.writeFileSync(file, `${c.body}\n\n---\nFiled by the nightly improve run. Add the \`agent:implement\` label to have it implemented.\n`);
+  const next =
+    c.strength === "strong"
+      ? "This candidate is `strong`, so it is labeled `agent:implement` automatically."
+      : "Add the `agent:implement` label to have it implemented.";
+  fs.writeFileSync(file, `${c.body}\n\n---\nFiled by the nightly improve run. ${next}\n`);
   const url = gh([
     "issue", "create",
     "--title", c.title,
@@ -54,4 +63,11 @@ for (const c of plan.candidates) {
     "--label", `strength:${c.strength}`,
   ]).trim();
   note(`Filed ${url}`);
+
+  // A strong candidate goes straight to implementation; anything less waits for a human. The label is added with
+  // the PAT, in its own call: an event caused by GITHUB_TOKEN would not start implement.yml.
+  if (c.strength === "strong") {
+    gh(["issue", "edit", url, "--add-label", "agent:implement"], required("AGENT_PAT"));
+    note(`Labeled ${url} agent:implement`);
+  }
 }
