@@ -47,6 +47,10 @@ echo
 description = "Regenerate the synthetic sample capture (offline), written to data/sample/"
 run = "uv run citibike-sample data/sample/sample_capture.jsonl.gz --start 2026-10-20T12:00:00Z --minutes 45"
 
+[tasks."capture:export-real"]
+description = "Export the newest 45 minutes of real Kafka data as data/sample/real_capture.jsonl.gz (needs the running stack)"
+run = "uv run python scripts/export_real_capture.py"
+
 [tasks."kafka:replay"]
 description = "Replay the committed sample through Kafka at 60x (citibike_replay DAG)"
 run = "mise run dag:trigger citibike_replay '{\"speed\": 60}'"
@@ -62,6 +66,10 @@ run = "uv run python -m citibike_producer.broker peek pipeline.poll_log --count 
 [tasks."kafka:verify"]
 description = "Verify messages in both main topics"
 depends = ["kafka:consume-status", "kafka:consume-poll"]
+
+[tasks."e2e:live"]
+description = "Live end-to-end check: reprocess Kafka's real messages into an isolated lake and verify the cleaning, the serving files and the live lake's latency and continuity (needs the running stack; not part of check)"
+run = "mkdir -p logs/e2e_live && uv run python -m tests.e2e_live --report logs/e2e_live/$(date -u +%Y-%m-%dT%H%MZ).md"
 
 [tasks."agent:setup"]
 description = "Walk through the one-time setup of the nightly Sandcastle workflows (secrets, labels, backlog issues, first dry run)"
