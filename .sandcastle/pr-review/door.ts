@@ -6,10 +6,15 @@ export const DOORS = ["one-way", "two-way"] as const;
 export const doorSchema = z.enum(DOORS);
 export type Door = z.infer<typeof doorSchema>;
 
-/** Create both door labels (idempotent: `--force`), so a repo that has not rerun `setup.sh` still works. */
+/**
+ * Create a door label only if the repo lacks it, so a repo that has not rerun `setup.sh` still works. `setup.sh` owns
+ * their description and colour; this never overwrites them and writes nothing once the labels exist.
+ */
 export const ensureDoorLabels = (gh: (args: string[]) => string): void => {
-  gh(["label", "create", "door:one-way", "--force", "--description", "PR review: hard to reverse", "--color", "b60205"]);
-  gh(["label", "create", "door:two-way", "--force", "--description", "PR review: easy to reverse", "--color", "0e8a16"]);
+  const existing = new Set(gh(["label", "list", "--limit", "1000", "--json", "name", "--jq", ".[].name"]).split("\n"));
+  for (const name of ["door:one-way", "door:two-way"]) {
+    if (!existing.has(name)) gh(["label", "create", name]);
+  }
 };
 
 /** The label that states a door, and the one it replaces. Written out so `check_agent_labels.py` sees both. */
