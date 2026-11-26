@@ -1,3 +1,4 @@
+import { doorLabels } from "./door";
 import { BOT_LOGIN, MAX_COMMENTS, REVIEW_MARKER, type PriorThread, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
 
@@ -25,6 +26,8 @@ export interface ReviewActions {
   readonly body: string;
   /** Every one lands on a commentable RIGHT-side line. */
   readonly inline: readonly InlineComment[];
+  /** The door label to add to the PR, and the opposite one to remove. */
+  readonly door: { readonly add: string; readonly remove: string };
   /** Only threads in context.openThreads. */
   readonly resolutions: readonly Resolution[];
 }
@@ -136,5 +139,5 @@ export const planActions = (review: Review, context: ReviewContext): ReviewActio
   const parts = [review.summary];
   if (unanchored.length > 0) parts.push(unanchored.join("\n"));
   parts.push(`${REVIEW_MARKER}\nsha=${context.headSha}`);
-  return { commitId: context.headSha, body: parts.join("\n\n"), inline, resolutions };
+  return { commitId: context.headSha, body: parts.join("\n\n"), inline, resolutions, door: doorLabels(review.door) };
 };

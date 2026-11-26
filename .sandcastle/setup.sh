@@ -243,7 +243,7 @@ set_secret AGENT_PAT "$AGENT_PAT"   # implement.yml pushes and opens the PR with
 
 stage "Create the labels"
 say "The workflows move issues between these labels; they must exist first."
-if confirm "Create the agent:* and strength:* labels in $REPO?"; then
+if confirm "Create the agent:*, strength:* and door:* labels in $REPO?"; then
   for spec in \
     "agent:candidate|Architecture candidate filed by the nightly run|0e8a16" \
     "agent:implement|Add to start the implement workflow|1d76db" \
@@ -252,7 +252,9 @@ if confirm "Create the agent:* and strength:* labels in $REPO?"; then
     "agent:pr-open|The implement workflow opened a PR for this issue|0e8a16" \
     "agent:blocked|The implement workflow could not finish|d93f0b" \
     "strength:strong|Candidate strength: strong|5319e7" \
-    "strength:explore|Candidate strength: worth exploring|5319e7"; do
+    "strength:explore|Candidate strength: worth exploring|5319e7" \
+    "door:one-way|PR review: hard to reverse|b60205" \
+    "door:two-way|PR review: easy to reverse|0e8a16"; do
     IFS='|' read -r name desc color <<<"$spec"
     if gh label create "$name" --description "$desc" --color "$color" --force >/dev/null 2>&1; then
       say "✓ $name"
@@ -262,7 +264,7 @@ if confirm "Create the agent:* and strength:* labels in $REPO?"; then
     fi
   done
 else
-  SKIPPED+=("create the agent:* and strength:* labels")
+  SKIPPED+=("create the agent:*, strength:* and door:* labels")
 fi
 
 stage "Move the old backlog into issues"

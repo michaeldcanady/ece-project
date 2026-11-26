@@ -28,7 +28,7 @@ const context = (over: Partial<ReviewContext> = {}): ReviewContext => ({
   ...over,
 });
 
-const review = (over: Partial<Review> = {}): Review => ({ summary: "Looks fine.", comments: [], resolved: [], ...over });
+const review = (over: Partial<Review> = {}): Review => ({ summary: "Looks fine.", door: "two-way", comments: [], resolved: [], ...over });
 
 test("commentableLines returns new-side added and context lines, not removed lines or the gap between hunks", () => {
   assert.deepEqual([...commentableLines(PATCH)], [3, 4, 5, 6, 20, 21]);
@@ -129,4 +129,11 @@ test("botRepliedLast is true only when a marked bot reply follows the first comm
   assert.equal(botRepliedLast([bot, bot]), true);
   assert.equal(botRepliedLast([bot, bot, human]), false);
   assert.equal(botRepliedLast([bot, { author: "github-actions[bot]", body: "unmarked" }]), false);
+});
+
+test("the door becomes a label to add and the opposite one to remove, and never enters the body", () => {
+  const one = planActions(review({ door: "one-way" }), context());
+  assert.deepEqual(one.door, { add: "door:one-way", remove: "door:two-way" });
+  assert.doesNotMatch(one.body, /door/i);
+  assert.deepEqual(planActions(review(), context()).door, { add: "door:two-way", remove: "door:one-way" });
 });
