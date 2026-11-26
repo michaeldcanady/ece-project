@@ -41,7 +41,12 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --remove-label agent:blocked || true
           existing=$(gh pr list --state open --json url,headRefName \
             --jq "[.[] | select(.headRefName == \"$BRANCH\")] | .[0].url // empty")
-          if [ -n "$existing" ]; then
+          has_spec=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body | contains("## Acceptance criteria")')
+          if [ "$has_spec" != "true" ]; then
+            gh issue edit "$ISSUE_NUMBER" --add-label agent:blocked
+            gh issue comment "$ISSUE_NUMBER" --body "Not started: this issue has no \`## Acceptance criteria\` section, so it is a note, not a spec. Add \`agent:spec\` to expand it, then re-add \`agent:implement\`."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$existing" ]; then
             gh issue comment "$ISSUE_NUMBER" --body "Not started: $existing is already open for this issue. Close it, then re-add \`agent:implement\`."
             echo "go=false" >> "$GITHUB_OUTPUT"
           else

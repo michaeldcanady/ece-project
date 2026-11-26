@@ -247,6 +247,7 @@ if confirm "Create the agent:* and strength:* labels in $REPO?"; then
   for spec in \
     "agent:candidate|Architecture candidate filed by the nightly run|0e8a16" \
     "agent:implement|Add to start the implement workflow|1d76db" \
+    "agent:spec|Add to expand a short note into a full spec|c5def5" \
     "agent:in-progress|The implement workflow is running|fbca04" \
     "agent:blocked|The implement workflow could not finish|d93f0b" \
     "strength:strong|Candidate strength: strong|5319e7" \

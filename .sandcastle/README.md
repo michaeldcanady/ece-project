@@ -12,7 +12,12 @@ Python project; `mise run typecheck:agent` checks it and runs as part of `mise r
    `mise run check`, runs a review pass, runs the check again, then opens a PR that closes the issue.
 3. A failure at any point leaves the issue labeled `agent:blocked` with the reason as a comment. No PR opens.
 
-Labels move `agent:candidate` > `agent:implement` > `agent:in-progress` > a PR, or `agent:blocked`.
+A thin issue (a short note, such as a migrated backlog entry) is not implementable. Adding `agent:spec` runs
+`.github/workflows/spec.yml`, which expands it into the full spec and replaces the issue body, keeping the note
+under "Original note". `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
+`agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
+
+Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > a PR, or `agent:blocked`.
 
 ## Facts a file will not tell you
 
