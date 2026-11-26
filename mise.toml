@@ -67,7 +67,7 @@ depends = ["kafka:consume-status", "kafka:consume-poll"]
 
 [tasks."e2e:live"]
 description = "Live end-to-end check: reprocess Kafka's real messages into an isolated lake and verify the cleaning, the serving files and the live lake's latency and continuity (needs the running stack; not part of check)"
-run = "uv run python -m tests.e2e_live --report /tmp/e2e_live_report.md"
+run = "mkdir -p logs/e2e_live && uv run python -m tests.e2e_live --report logs/e2e_live/$(date -u +%Y-%m-%dT%H%MZ).md"
 
 [tasks.lint]
 description = "Lint: ruff, then the strong-types and layer checks"

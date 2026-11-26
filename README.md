@@ -122,8 +122,10 @@ The full list, with comments, is in `citibike_producer/config.py` and `citibike_
 
 `data/sample/sample_capture.jsonl.gz` is **synthetic**: 40 stations over 45 minutes at one poll a minute. It
 includes a depleting, a filling, an empty, a stale, an offline, an invalid and an unknown station. It is built by
-the real producer jobs against simulated HTTP, so its envelopes match live data exactly. **Replace it with a real
-capture before submitting.**
+the real producer jobs against simulated HTTP, so its envelopes match live data exactly. It is the only data
+committed. `mise run capture:export-real` writes a **real** capture of the running stack to
+`data/sample/real_capture.jsonl.gz`, which `.gitignore` keeps local; the proposal's real sample for the repo needs
+that rule changed first.
 
 ```bash
 mise run kafka:replay         # replay the committed sample through Kafka at 60x (citibike_replay DAG)
@@ -185,7 +187,7 @@ The libraries import nothing from Airflow, so all the processing logic can be te
 ```bash
 mise run test       # all tests; no broker or network needed
 mise run e2e:live   # needs the running stack: reprocess Kafka's real messages into a temp lake and check the cleaning,
-                    # the serving files, latency and poll continuity (report in /tmp/e2e_live_report.md)
+                    # the serving files, latency and poll continuity (a dated report lands in logs/e2e_live/)
 mise run lint       # ruff
 mise run sync       # install the locked dependencies (the dev container does this on create)
 mise run lock       # re-resolve uv.lock after changing dependencies in pyproject.toml
