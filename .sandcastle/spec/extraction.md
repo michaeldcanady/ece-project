@@ -1,7 +1,7 @@
 Output your final answer now as a single `<output>` tag containing only JSON of this shape, and nothing else:
 
 ```
-{"body": "markdown spec"}
+{"strength": "strong" | "explore" | "speculative", "body": "markdown spec"}
 ```
 
-The `body` is the full markdown spec from your work, as one JSON string (escape newlines and quotes).
+The `strength` is your rating of the spec. The `body` is the full markdown spec from your work, as one JSON string (escape newlines and quotes).

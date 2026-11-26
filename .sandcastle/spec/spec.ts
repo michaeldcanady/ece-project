@@ -32,6 +32,7 @@ try {
     promptArgs: {
       ISSUE_TITLE: issue.title,
       ISSUE_NOTE: note,
+      STRENGTH_RUBRIC: fs.readFileSync(here("../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(here("../shared/spec-format.md"), "utf8"),
     },
     output: sandcastle.Output.object({ tag: "output", schema: specSchema }),
