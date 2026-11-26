@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alreadyReviewed, commentableLines, planActions } from "./review-actions";
+import { alreadyReviewed, commentableLines, ownedOpenThreads, planActions, reviewedShasOf, type RawThread } from "./review-actions";
 import { REVIEW_MARKER, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
 
@@ -74,4 +74,50 @@ test("the body carries the marker and the head sha, and alreadyReviewed sees tha
 test("planActions is a function of its inputs only", () => {
   const r = review({ comments: [{ path: "a.ts", line: 21, body: "x" }], resolved: [{ threadId: "T1", reply: "ok" }] });
   assert.deepEqual(planActions(r, context()), planActions(r, context()));
+});
+
+test("more than 25 comments are cut to 25 and the rest are noted in the body", () => {
+  const comments = Array.from({ length: 27 }, (_, i) => ({ path: "a.ts", line: 4, body: `c${i}` }));
+  const actions = planActions(review({ comments }), context());
+  assert.equal(actions.inline.length, 25);
+  assert.match(actions.body, /2 further comments/);
+});
+
+const raw = (over: Partial<RawThread> = {}): RawThread => ({
+  id: "T",
+  isResolved: false,
+  path: "a.ts",
+  line: 1,
+  comments: [{ databaseId: 1, author: "github-actions", authorAssociation: "NONE", body: `x ${REVIEW_MARKER}` }],
+  ...over,
+});
+
+test("ownedOpenThreads keeps only unresolved threads the bot opened with the marker", () => {
+  const human = { databaseId: 2, author: "mallory", authorAssociation: "NONE", body: `pasted ${REVIEW_MARKER}` };
+  const kept = ownedOpenThreads(
+    [raw(), raw({ id: "R", isResolved: true }), raw({ id: "H", comments: [human] }), raw({ id: "U", comments: [{ ...human, author: "github-actions", body: "no marker" }] })],
+    "alice",
+  );
+  assert.deepEqual(kept.map((t) => t.threadId), ["T"]);
+});
+
+test("ownedOpenThreads leaves out replies from strangers but keeps the bot, the PR author and collaborators", () => {
+  const reply = (author: string, authorAssociation: string) => ({ databaseId: 9, author, authorAssociation, body: author });
+  const [thread] = ownedOpenThreads(
+    [raw({ comments: [...raw().comments, reply("alice", "NONE"), reply("bob", "COLLABORATOR"), reply("mallory", "NONE")] })],
+    "alice",
+  );
+  assert.deepEqual(thread?.comments.map((c) => c.author), ["github-actions", "alice", "bob"]);
+});
+
+test("reviewedShasOf reads sha only from marked reviews by the bot", () => {
+  const body = `ok\n\n${REVIEW_MARKER}\nsha=abc123`;
+  assert.deepEqual(
+    reviewedShasOf([
+      { author: "github-actions[bot]", body },
+      { author: "mallory", body: `${REVIEW_MARKER}\nsha=dead` },
+      { author: "github-actions[bot]", body: "sha=beef" },
+    ]),
+    ["abc123"],
+  );
 });

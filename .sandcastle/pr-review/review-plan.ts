@@ -4,8 +4,7 @@ import { z } from "zod";
 export const reviewSchema = z.object({
   summary: z.string().min(1),
   comments: z
-    .array(z.object({ path: z.string(), line: z.number().int().positive(), body: z.string().min(1) }))
-    .max(25),
+    .array(z.object({ path: z.string(), line: z.number().int().positive(), body: z.string().min(1) })),
   resolved: z.array(z.object({ threadId: z.string(), reply: z.string().min(1) })),
 });
 

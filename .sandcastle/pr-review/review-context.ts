@@ -3,6 +3,12 @@ import { z } from "zod";
 /** Appended to every comment the reviewer writes, so the next run recognises its own threads (the author is a shared bot). */
 export const REVIEW_MARKER = "<!-- sandcastle-pr-review -->";
 
+/** The login GitHub reports for the Actions bot, with or without the `[bot]` suffix the REST API adds. */
+export const BOT_LOGIN = "github-actions";
+
+/** Most comments a review posts; the planner notes the rest in the body. */
+export const MAX_COMMENTS = 25;
+
 export const changedFileSchema = z.object({
   path: z.string(),
   /** The unified diff of the file; "" for a binary or too-large file. */

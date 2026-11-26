@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { fail, required, writeJson } from "../shared/common";
-import { REVIEW_MARKER, reviewContextSchema, type ReviewContext } from "./review-context";
+import { ownedOpenThreads, reviewedShasOf } from "./review-actions";
+import { reviewContextSchema, type ReviewContext } from "./review-context";
 
 /**
  * The GitHub boundary on the way in: the only place raw GitHub JSON is read. Writes context.json to OUTPUT_DIR.
@@ -12,12 +13,14 @@ const gh = (args: string[]): string =>
   execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 256 * 1024 * 1024 });
 
 const filesSchema = z.array(z.array(z.object({ filename: z.string(), patch: z.string().optional() })));
-const reviewsSchema = z.array(z.array(z.object({ body: z.string().nullable() })));
+const reviewsSchema = z.array(z.array(z.object({ body: z.string().nullable(), user: z.object({ login: z.string() }).nullable() })));
 const threadsSchema = z.object({
   data: z.object({
     repository: z.object({
       pullRequest: z.object({
+        author: z.object({ login: z.string() }).nullable(),
         reviewThreads: z.object({
+          pageInfo: z.object({ hasNextPage: z.boolean() }),
           nodes: z.array(
             z.object({
               id: z.string(),
@@ -25,8 +28,10 @@ const threadsSchema = z.object({
               path: z.string(),
               line: z.number().int().nullable(),
               comments: z.object({
+                pageInfo: z.object({ hasNextPage: z.boolean() }),
                 nodes: z.array(
                   z.object({
+                    authorAssociation: z.string(),
                     databaseId: z.number().int(),
                     author: z.object({ login: z.string() }).nullable(),
                     body: z.string(),
@@ -44,8 +49,13 @@ const threadsSchema = z.object({
 const QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      author { login }
       reviewThreads(first: 100) {
-        nodes { id isResolved path line comments(first: 50) { nodes { databaseId author { login } body } } }
+        pageInfo { hasNextPage }
+        nodes {
+          id isResolved path line
+          comments(first: 50) { pageInfo { hasNextPage } nodes { databaseId authorAssociation author { login } body } }
+        }
       }
     }
   }
@@ -58,31 +68,32 @@ try {
 
   const files = filesSchema.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${pr}/files`]))).flat();
   const reviews = reviewsSchema.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${pr}/reviews`]))).flat();
-  const threads = threadsSchema.parse(
+  const pullRequest = threadsSchema.parse(
     JSON.parse(
-      gh(["api", "graphql", "-f", `query=${QUERY}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${pr}`]),
+      gh(["api", "graphql", "-f", `query=${QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${pr}`]),
     ),
-  ).data.repository.pullRequest.reviewThreads.nodes;
+  ).data.repository.pullRequest;
+  const threads = pullRequest.reviewThreads;
+  if (threads.pageInfo.hasNextPage || threads.nodes.some((t) => t.comments.pageInfo.hasNextPage)) {
+    console.warn("Warning: more review threads or comments than one page; the extra ones are not considered.");
+  }
 
-  const openThreads = threads.flatMap((t) => {
-    const first = t.comments.nodes[0];
-    if (t.isResolved || first === undefined || !first.body.includes(REVIEW_MARKER)) return [];
-    return [
-      {
-        threadId: t.id,
-        firstCommentId: first.databaseId,
-        path: t.path,
-        line: t.line,
-        comments: t.comments.nodes.map((c) => ({ author: c.author?.login ?? "ghost", body: c.body })),
-      },
-    ];
-  });
-
-  const reviewedShas = reviews.flatMap((r) => {
-    const body = r.body ?? "";
-    const sha = body.includes(REVIEW_MARKER) ? /^sha=([0-9a-f]+)$/m.exec(body)?.[1] : undefined;
-    return sha === undefined ? [] : [sha];
-  });
+  const openThreads = ownedOpenThreads(
+    threads.nodes.map((t) => ({
+      id: t.id,
+      isResolved: t.isResolved,
+      path: t.path,
+      line: t.line,
+      comments: t.comments.nodes.map((c) => ({
+        databaseId: c.databaseId,
+        author: c.author?.login ?? "ghost",
+        authorAssociation: c.authorAssociation,
+        body: c.body,
+      })),
+    })),
+    pullRequest.author?.login ?? "",
+  );
+  const reviewedShas = reviewedShasOf(reviews.map((r) => ({ author: r.user?.login ?? "ghost", body: r.body ?? "" })));
 
   const context: ReviewContext = reviewContextSchema.parse({
     pr,
