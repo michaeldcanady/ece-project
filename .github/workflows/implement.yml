@@ -1,0 +1,122 @@
+name: implement
+
+# Adding the `agent:implement` label to an issue implements its spec, reviews it, and opens a pull request that
+# closes the issue, but only if `mise run check` is green after both passes. Otherwise the issue is labeled
+# `agent:blocked` with the reason in a comment, and no PR opens.
+#
+# The agent step holds only CLAUDE_CODE_OAUTH_TOKEN. Credentials are not persisted by checkout; the push and the
+# PR use AGENT_PAT in their own steps. A PAT, not GITHUB_TOKEN, so that check.yml runs on the PR.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  implement:
+    if: github.event.label.name == 'agent:implement'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: implement-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      BRANCH: agent/issue-${{ github.event.issue.number }}
+      GH_REPO: ${{ github.repository }}
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      OUT: ${{ runner.temp }}/out
+    steps:
+      - name: Preflight
+        id: preflight
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:implement || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:blocked || true
+          existing=$(gh pr list --state open --json url,headRefName \
+            --jq "[.[] | select(.headRefName == \"$BRANCH\")] | .[0].url // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "Not started: $existing is already open for this issue. Close it, then re-add \`agent:implement\`."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            gh issue edit "$ISSUE_NUMBER" --add-label agent:in-progress
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.preflight.outputs.go == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - if: steps.preflight.outputs.go == 'true'
+        run: |
+          git config user.name "sandcastle-agent[bot]"
+          git config user.email "sandcastle-agent[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          mkdir -p "$OUT"
+
+      - if: steps.preflight.outputs.go == 'true'
+        uses: jdx/mise-action@v2
+      - if: steps.preflight.outputs.go == 'true'
+        run: mise run sync
+      - if: steps.preflight.outputs.go == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: steps.preflight.outputs.go == 'true'
+        name: Install Sandcastle and Claude Code
+        run: |
+          npm install --prefix .sandcastle
+          npm install -g @anthropic-ai/claude-code
+
+      # The issue text is untrusted input: it goes to a JSON file, never into shell or `${{ }}`.
+      - if: steps.preflight.outputs.go == 'true'
+        name: Fetch the spec
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue view "$ISSUE_NUMBER" --json title,body,comments > "$RUNNER_TEMP/issue.json"
+
+      - if: steps.preflight.outputs.go == 'true'
+        name: Implement, check, review, check
+        id: agent
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ISSUE_FILE: ${{ runner.temp }}/issue.json
+          OUTPUT_DIR: ${{ runner.temp }}/out
+        run: npx --prefix .sandcastle tsx .sandcastle/implement/implement.ts
+
+      - if: steps.preflight.outputs.go == 'true' && steps.agent.outcome == 'success'
+        name: Push and open the PR
+        env:
+          AGENT_PAT: ${{ secrets.AGENT_PAT }}
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          gh pr create --base main --head "$BRANCH" --title "$ISSUE_TITLE" --body-file "$OUT/pr_body.md"
+
+      - if: steps.preflight.outputs.go == 'true' && steps.agent.outcome == 'success'
+        name: Clear the in-progress label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress
+
+      - if: always() && steps.preflight.outputs.go == 'true' && steps.agent.outcome != 'success'
+        name: Block the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          reason="$OUT/failure_reason.txt"
+          [ -s "$reason" ] || echo "The run ended before it could say why. See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID" > "$reason"
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress || true
+          gh issue edit "$ISSUE_NUMBER" --add-label agent:blocked
+          { echo 'The nightly agent could not finish this issue, so no PR was opened.'; echo; echo '```'; cat "$reason"; echo '```'; } > "$OUT/comment.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$OUT/comment.md"

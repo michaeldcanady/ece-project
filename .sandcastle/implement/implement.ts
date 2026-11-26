@@ -35,6 +35,16 @@ const tail = (text: string, lines = 60): string => text.split("\n").slice(-lines
 const commitsAhead = (): number =>
   Number(exec("git", ["rev-list", "--count", "origin/main..HEAD"]).output.trim());
 
+// The push uses a token that can reach the workflows, so the agent may not change the machinery that runs it.
+const PROTECTED = [".github/", ".sandcastle/", "CLAUDE.md", "CODING_STANDARDS.md", ".claude/", ".githooks/"];
+
+const guardProtected = (who: string): void => {
+  const touched = exec("git", ["diff", "--name-only", "origin/main...HEAD"])
+    .output.split("\n")
+    .filter((f) => PROTECTED.some((p) => f === p || f.startsWith(p)));
+  if (touched.length > 0) fail(`${who} changed protected files:\n${touched.join("\n")}`);
+};
+
 try {
   const issue = JSON.parse(fs.readFileSync(ISSUE_FILE, "utf8")) as {
     title: string;
@@ -64,6 +74,8 @@ try {
 
   if (commitsAhead() === 0) fail("The implement agent made no commits.");
 
+  guardProtected("The implement agent");
+
   const first = check();
   if (!first.ok) fail(`mise run check failed after implementation:\n\n${tail(first.output)}`);
 
@@ -75,6 +87,8 @@ try {
     promptFile: here("review-prompt.md"),
     promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: notesFile },
   });
+
+  guardProtected("The review pass");
 
   const second = check();
   if (!second.ok) fail(`mise run check failed after review:\n\n${tail(second.output)}`);
