@@ -21,6 +21,12 @@ specced issue joins the backlog and the scan's dedupe. It never adds `agent:impl
 `GITHUB_TOKEN`, and a human decides. `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
 `agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
 
+A pull request is reviewed by `.github/workflows/pr-review.yml` on every push to it, in three jobs like `spec.yml`
+(`fetch` reads, `review` runs the model with only the OAuth token, `post` writes). It posts one `COMMENT` review with
+inline comments, and replies to and resolves its own earlier threads that the new code addresses. It never approves or
+requests changes, and it skips drafts and fork PRs. Which writes are allowed is decided in one pure module,
+`pr-review/review-actions.ts`.
+
 Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
 
 ## Facts a file will not tell you
@@ -35,6 +41,9 @@ Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agen
 - DAG tests skip on the runner (no Airflow container); the PR body says so.
 - The scan dedupes against every existing `agent:candidate` issue, open or closed, by title and by the files its
   `## Files` section names.
+- The PR reviewer posts as `github-actions[bot]`, a shared author, so it recognises its own threads by the
+  `REVIEW_MARKER` comment in the body. A head sha it already reviewed (`sha=<sha>` in a marked review) is skipped.
+- `pr-review.yml` and `.sandcastle/pr-review/` are covered by `PROTECTED`, so a human must change them.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 
 ## Setup
