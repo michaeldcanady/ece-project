@@ -6,6 +6,8 @@ AIRFLOW_AUTH = "admin:admin"   # dev only, matches docker-compose.yml
 [tools]
 python = "3.9"
 uv = "latest"
+node = "22"          # only for the agent workflows in .sandcastle/
+actionlint = "latest"
 
 # mise is the interface to the project: every command a person runs is a task here (`mise tasks` lists them).
 # uv is only the package manager the tasks call. The pipeline itself runs as Airflow DAGs; these tasks set up
@@ -69,17 +71,25 @@ depends = ["kafka:consume-status", "kafka:consume-poll"]
 description = "Live end-to-end check: reprocess Kafka's real messages into an isolated lake and verify the cleaning, the serving files and the live lake's latency and continuity (needs the running stack; not part of check)"
 run = "mkdir -p logs/e2e_live && uv run python -m tests.e2e_live --report logs/e2e_live/$(date -u +%Y-%m-%dT%H%MZ).md"
 
+[tasks."agent:setup"]
+description = "Walk through the one-time setup of the nightly Sandcastle workflows (secrets, labels, backlog issues, first dry run)"
+run = "bash .sandcastle/setup.sh"
+
+[tasks."typecheck:agent"]
+description = "Typecheck the TypeScript agent workflows in .sandcastle/ (installs their locked dependencies first)"
+run = ["npm ci --prefix .sandcastle --no-audit --no-fund", "npm run --prefix .sandcastle typecheck"]
+
 [tasks.lint]
-description = "Lint: ruff, then the strong-types and layer checks"
-run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_layers.py"]
+description = "Lint: ruff, the strong-types and layer checks, then actionlint on the workflows"
+run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_layers.py", "actionlint"]
 
 [tasks.test]
 description = "Run the tests (no network or broker needed)"
 run = "uv run pytest -v"
 
 [tasks.check]
-description = "Everything CI and the pre-commit hook run: lint, then tests"
-run = ["mise run lint", "uv run pytest -q -rs"]
+description = "Everything CI and the pre-commit hook run: lint, the agent typecheck, then tests"
+run = ["mise run lint", "mise run typecheck:agent", "uv run pytest -q -rs"]
 
 [tasks."smoke:replay"]
 description = "Replay the committed sample through the running stack"

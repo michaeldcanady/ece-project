@@ -1,0 +1,125 @@
+name: improve
+
+# Nightly architecture scan: find deepening opportunities, spec each one, file it as an issue labeled
+# `agent:candidate`. Nothing is implemented here; a human adds `agent:implement` to start implement.yml.
+#
+# Runs nightly at 06:00 UTC. To try a change by hand: Actions > improve > Run workflow, with dry run on.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Write the planned issues to the run summary instead of filing them"
+        type: boolean
+        default: true
+
+concurrency:
+  group: improve
+  cancel-in-progress: false
+
+# Open `agent:candidate` issues at which the scan pauses, so unread specs do not pile up.
+env:
+  MAX_OPEN_CANDIDATES: "10"
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: read
+    outputs:
+      proceed: ${{ steps.list.outputs.proceed }}
+    steps:
+      # Issue titles are untrusted: they go to a JSON file and only the scripts read them.
+      - id: list
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/existing"
+          gh issue list --state all --label agent:candidate --limit 1000 \
+            --json number,title,state,body > "$RUNNER_TEMP/existing/existing.json"
+          open=$(jq '[.[] | select(.state == "OPEN")] | length' "$RUNNER_TEMP/existing/existing.json")
+          echo "Open candidates: $open (pause at $MAX_OPEN_CANDIDATES)"
+          if [ "$open" -ge "$MAX_OPEN_CANDIDATES" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Paused: $open open agent:candidate issues. Review or close some." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: existing
+          path: ${{ runner.temp }}/existing/existing.json
+
+  scan:
+    needs: list
+    if: needs.list.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Read-only, and no GitHub token in the agent's environment: it can read the repo and write plan.json.
+    permissions:
+      contents: read
+    env:
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v2
+      - run: mise run sync
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Sandcastle and Claude Code
+        run: |
+          npm ci --prefix .sandcastle
+          npm install -g @anthropic-ai/claude-code
+      - uses: actions/download-artifact@v4
+        with:
+          name: existing
+          path: ${{ runner.temp }}/existing
+      - name: Scan and spec
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          EXISTING_FILE: ${{ runner.temp }}/existing/existing.json
+          OUTPUT_DIR: ${{ runner.temp }}/out
+        run: npx --prefix .sandcastle tsx .sandcastle/improve/improve.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/out/
+
+  apply:
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+      - name: File the issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PLAN_DIR: ${{ runner.temp }}/plan
+          AGENT_PAT: ${{ secrets.AGENT_PAT }} # labels strong candidates agent:implement; GITHUB_TOKEN would not start implement.yml
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: npx --prefix .sandcastle tsx .sandcastle/improve/apply.ts

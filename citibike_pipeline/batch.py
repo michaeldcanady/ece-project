@@ -12,28 +12,24 @@ import hashlib
 import json
 import logging
 import re
-from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
-
-from citibike_contract import EVENT_TYPE_BY_TOPIC, InvalidEnvelope, InvalidPollLog, PollLog, decode
+from typing import List, Mapping, Optional, Tuple
 
 from . import lake, serving
 from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
 from .config import DATA_TOPICS, PipelineConfig
+from .decoded_batch import DecodedBatch
 from .enrichment import WEATHER_READING_COLS, Dimension, PriorContext, WeatherReading, enrich_status
 from .kafka_io import (
     KafkaBatchReader,
     Ranges,
-    Record,
     cap_ranges,
     fits_within,
     ranges_from_json,
     ranges_to_json,
     total_messages,
 )
-from .observations import Delivered, Rejected, StationStatus, WeatherObservation
 from .rows import CuratedWeatherRow, as_mappings
 from .schemas import (
     DLQ,
@@ -41,7 +37,7 @@ from .schemas import (
 )
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
-from .timeutil import epoch, from_epoch, from_epoch_ms, iso, parse_iso, utcnow
+from .timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -158,68 +154,6 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
 # process
 # ---------------------------------------------------------------------------------------------
 
-@dataclass
-class Parsed:
-    raw_rows: List[Dict[str, Any]] = field(default_factory=list)
-    dlq_rows: List[Dict[str, Any]] = field(default_factory=list)
-    status: List[Delivered[StationStatus]] = field(default_factory=list)
-    weather: List[Delivered[WeatherObservation]] = field(default_factory=list)
-    records_read: int = 0
-
-
-def _dlq(rec: Record, reason: str, batch_id: str, processed_at: datetime) -> Dict[str, Any]:
-    return {"reason": reason, "kafka_topic": rec.topic, "kafka_partition": rec.partition,
-            "kafka_offset": rec.offset, "kafka_timestamp": from_epoch_ms(rec.timestamp_ms),
-            "raw_value": (rec.value or b"").decode("utf-8", "replace"),
-            "batch_id": batch_id, "processed_at": processed_at}
-
-
-def parse_records(records: List[Record], batch_id: str, processed_at: datetime,
-                  cfg: PipelineConfig) -> Parsed:
-    out = Parsed(records_read=len(records))
-    for rec in records:
-        try:
-            env = decode(rec.value)
-        except InvalidEnvelope as e:
-            out.dlq_rows.append(_dlq(rec, ",".join(e.reasons), batch_id, processed_at))
-            continue
-        et, payload, fetched = env.event_type, env.payload, env.fetched_at
-        if EVENT_TYPE_BY_TOPIC.get(rec.topic) != et:
-            out.dlq_rows.append(_dlq(rec, "event_type_topic_mismatch", batch_id, processed_at))
-            continue
-        status: Union[StationStatus, Rejected, None] = None
-        weather: Union[WeatherObservation, Rejected, None] = None
-        reasons: Tuple[str, ...] = ()
-        if et == "station_status":
-            status = StationStatus.parse(payload, epoch(fetched), cfg.future_skew_s)
-            reasons = status.reasons if isinstance(status, Rejected) else ()
-        elif et == "weather_current":
-            weather = WeatherObservation.parse(payload)
-            reasons = weather.reasons if isinstance(weather, Rejected) else ()
-        else:
-            try:
-                PollLog.from_payload(payload)
-            except InvalidPollLog as exc:
-                reasons = tuple(exc.reasons)
-        out.raw_rows.append({
-            "kafka_topic": rec.topic, "kafka_partition": rec.partition, "kafka_offset": rec.offset,
-            "kafka_timestamp": from_epoch_ms(rec.timestamp_ms), "event_type": et, "poll_id": env.poll_id,
-            "source": env.source, "source_url": env.source_url,
-            "gbfs_version": env.gbfs_version, "feed_last_updated": env.feed_last_updated,
-            "fetched_at": fetched, "producer_version": env.producer_version,
-            "replay": env.replay, "replayed_at": env.replayed_at,
-            "payload_json": json.dumps(payload, separators=(",", ":")),
-            "batch_id": batch_id, "processed_at": processed_at,
-        })
-        if reasons:
-            out.dlq_rows.append(_dlq(rec, ",".join(reasons), batch_id, processed_at))
-        elif isinstance(status, StationStatus):
-            out.status.append(Delivered(rec, env, status))
-        elif isinstance(weather, WeatherObservation):
-            out.weather.append(Delivered(rec, env, weather))
-    return out
-
-
 def _load_dim(storage: Storage) -> Optional[Dimension]:
     if not storage.exists(lake.DIM_STATION_CURRENT):
         return None
@@ -227,61 +161,46 @@ def _load_dim(storage: Storage) -> Optional[Dimension]:
     return {r["station_id"]: r for r in t.to_pylist()}
 
 
-def _choose_as_of(parsed: Parsed, records: List[Record], processed_at: datetime) -> datetime:
-    """Event-time horizon of the batch. Status observations define it: weather and poll_log sit on
-    their own partitions and can be ahead of the status partitions during catch-up or replay."""
-    if parsed.status:
-        return max(d.envelope.fetched_at for d in parsed.status)
-    if parsed.weather:
-        return max(d.envelope.fetched_at for d in parsed.weather)
-    if parsed.raw_rows:
-        return max(r["fetched_at"] for r in parsed.raw_rows)
-    kafka_ms = [r.timestamp_ms for r in records if r.timestamp_ms]
-    return from_epoch(max(kafka_ms) / 1000.0) if kafka_ms else processed_at
-
-
 def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                   now: Optional[datetime] = None) -> Stats:
     batch_id = plan.batch_id
     processed_at = now or utcnow()
     records = reader.read(plan.ranges, cfg.read_timeout_s)
-    parsed = parse_records(records, batch_id, processed_at, cfg)
+    decoded = DecodedBatch.decode(records, batch_id, processed_at, cfg)
 
-    as_of = _choose_as_of(parsed, records, processed_at)
-    status_times = [d.envelope.fetched_at for d in parsed.status]
-    all_times = status_times + [d.envelope.fetched_at for d in parsed.weather] + [as_of]
+    as_of = decoded.as_of
+    status_times = [d.envelope.fetched_at for d in decoded.status]
+    all_times = status_times + [d.envelope.fetched_at for d in decoded.weather] + [as_of]
     ctx_end = min(status_times) if status_times else as_of
     prior = lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
-                                            STATUS_CONTEXT_COLS, exclude_batch=batch_id) if parsed.status else None
+                                            STATUS_CONTEXT_COLS, exclude_batch=batch_id) if decoded.status else None
     prior_context = PriorContext.from_table(prior)
     # Weather from earlier batches can be newer than this batch's first status row (partitions drain at
     # different speeds), so read it up to the newest time seen here.
     prior_weather_t = lake.CURATED_WEATHER.read_window(storage, ctx_end - timedelta(hours=3),
                                                        max(all_times) + timedelta(milliseconds=1),
                                                        WEATHER_READING_COLS, exclude_batch=batch_id)
-    weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in parsed.weather]
+    weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in decoded.weather]
     weather_readings = (WeatherReading.from_table(prior_weather_t)
-                        + [WeatherReading.from_observation(d.value) for d in parsed.weather])
+                        + [WeatherReading.from_observation(d.value) for d in decoded.weather])
 
-    status_rows, counts = enrich_status(parsed.status, prior_context, _load_dim(storage), weather_readings,
+    status_rows, counts = enrich_status(decoded.status, prior_context, _load_dim(storage), weather_readings,
                                         batch_id, processed_at, cfg)
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
-    by_event: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for r in parsed.raw_rows:
-        by_event[r["event_type"]].append(r)
-    for et, rows in by_event.items():
-        lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, rows)
+    for et, rows in decoded.raw_rows_by_event_type().items():
+        lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, [asdict(r) for r in rows])
     status_hours = lake.CURATED_STATUS.write(storage, batch_id, as_mappings(status_rows))
     lake.CURATED_WEATHER.write(storage, batch_id, as_mappings(weather_rows))
-    if parsed.dlq_rows:
-        put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id), to_table(parsed.dlq_rows, DLQ))
+    if decoded.dead_letters:
+        put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
+                    to_table([asdict(r) for r in decoded.dead_letters], DLQ))
 
     stats = Stats(batch_id=batch_id, as_of=as_of, status_hours=tuple(status_hours),
-                  counts=replace(counts, records_read=len(records), raw_rows=len(parsed.raw_rows),
-                                 weather_rows=len(weather_rows), dlq_rows=len(parsed.dlq_rows)))
+                  counts=replace(counts, records_read=len(records), raw_rows=len(decoded.raw_rows),
+                                 weather_rows=len(weather_rows), dlq_rows=len(decoded.dead_letters)))
     log.info("batch %s: read=%d raw=%d status=%d weather=%d dlq=%d as_of=%s", batch_id, len(records),
-             len(parsed.raw_rows), len(status_rows), len(weather_rows), len(parsed.dlq_rows), iso(as_of))
+             len(decoded.raw_rows), len(status_rows), len(weather_rows), len(decoded.dead_letters), iso(as_of))
     return stats
 
 
