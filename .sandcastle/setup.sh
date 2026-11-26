@@ -201,6 +201,9 @@ finish() {
 run_wizard() {
 
 TOTAL_STAGES=6
+
+# The prompts need a keyboard: `!` in Claude Code, a pipe or CI gives none, and the first read would die silently.
+[[ -t 0 ]] || { echo "Run this in a real terminal (not through '!' or a pipe): mise run agent:setup" >&2; exit 1; }
 # Secrets are kept out of the tracked .env; .sandcastle/.gitignore ignores this one.
 ENV_FILE=.sandcastle/.env
 
