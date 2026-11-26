@@ -73,7 +73,7 @@ jobs:
       - if: steps.preflight.outputs.go == 'true'
         name: Install Sandcastle and Claude Code
         run: |
-          npm install --prefix .sandcastle
+          npm ci --prefix .sandcastle
           npm install -g @anthropic-ai/claude-code
 
       # The issue text is untrusted input: it goes to a JSON file, never into shell or `${{ }}`.

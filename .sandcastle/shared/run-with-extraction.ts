@@ -45,5 +45,5 @@ export const runWithExtraction = async <T>(
     output: { ...output, maxRetries },
   });
 
-  return { ...produce, output: extraction.output };
+  return { ...produce, output: extraction.output as T };
 };
