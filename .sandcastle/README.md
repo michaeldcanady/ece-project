@@ -43,6 +43,7 @@ Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agen
   `## Files` section names.
 - The PR reviewer posts as `github-actions[bot]`, a shared author, so it recognises its own threads by the
   `REVIEW_MARKER` comment in the body. A head sha it already reviewed (`sha=<sha>` in a marked review) is skipped.
+- The `post` job of `pr-review.yml` has `contents: write` only because resolving a review thread needs it.
 - `pr-review.yml` and `.sandcastle/pr-review/` are covered by `PROTECTED`, so a human must change them.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 

@@ -85,7 +85,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read
+      # GitHub requires contents: write for the resolveReviewThread mutation; pull-requests: write alone is refused.
+      # This job runs no model, and its only writes are the review, its replies and resolving threads.
+      contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
