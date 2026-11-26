@@ -61,6 +61,10 @@ run = "uv run python -m citibike_producer.broker peek pipeline.poll_log --count 
 description = "Verify messages in both main topics"
 depends = ["kafka:consume-status", "kafka:consume-poll"]
 
+[tasks."agent:setup"]
+description = "Walk through the one-time setup of the nightly Sandcastle workflows (secrets, labels, backlog issues, first dry run)"
+run = "bash .sandcastle/setup.sh"
+
 [tasks.lint]
 description = "Lint: ruff, then the strong-types and layer checks"
 run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_layers.py"]
