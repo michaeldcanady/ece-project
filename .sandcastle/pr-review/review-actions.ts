@@ -15,7 +15,8 @@ export interface InlineComment {
 export interface Resolution {
   readonly threadId: string;
   readonly firstCommentId: number;
-  readonly reply: string;
+  /** null when the bot already replied last in the thread (an earlier attempt got that far). */
+  readonly reply: string | null;
 }
 
 export interface ReviewActions {
@@ -124,7 +125,13 @@ export const planActions = (review: Review, context: ReviewContext): ReviewActio
     const thread = threads.get(r.threadId);
     if (thread === undefined) continue;
     threads.delete(r.threadId); // resolve each thread once
-    resolutions.push({ threadId: thread.threadId, firstCommentId: thread.firstCommentId, reply: marked(r.reply) });
+    const last = thread.comments.length > 1 ? thread.comments.at(-1) : undefined;
+    const alreadyReplied = last !== undefined && isBot(last.author) && last.body.includes(REVIEW_MARKER);
+    resolutions.push({
+      threadId: thread.threadId,
+      firstCommentId: thread.firstCommentId,
+      reply: alreadyReplied ? null : marked(r.reply),
+    });
   }
 
   const parts = [review.summary];

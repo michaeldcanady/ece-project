@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { reviewContextSchema } from "./review-context";
 import { reviewSchema } from "./review-plan";
-import { planActions } from "./review-actions";
+import { alreadyReviewed, planActions } from "./review-actions";
 import { required } from "../shared/common";
 
 /**
@@ -34,6 +34,11 @@ if (live !== context.headSha) {
   process.exit(0);
 }
 
+if (alreadyReviewed(context)) {
+  console.log(`Head ${context.headSha} already has a review; posting nothing.`);
+  process.exit(0);
+}
+
 const actions = planActions(review, context);
 
 const payload = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-")), "review.json");
@@ -51,7 +56,10 @@ console.log(`Posted a review with ${actions.inline.length} inline comments.`);
 
 const RESOLVE = `mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }`;
 for (const r of actions.resolutions) {
-  gh(["api", `repos/${repo}/pulls/${context.pr}/comments/${r.firstCommentId}/replies`, "--method", "POST", "-f", `body=${r.reply}`]);
+  // Resolve first: a failure here leaves no reply behind for a rerun to repeat.
   gh(["api", "graphql", "-f", `query=${RESOLVE}`, "-F", `id=${r.threadId}`]);
+  if (r.reply !== null) {
+    gh(["api", `repos/${repo}/pulls/${context.pr}/comments/${r.firstCommentId}/replies`, "--method", "POST", "-f", `body=${r.reply}`]);
+  }
   console.log(`Resolved thread ${r.threadId}.`);
 }
