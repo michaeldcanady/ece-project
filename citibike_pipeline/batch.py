@@ -20,7 +20,8 @@ from . import lake, serving
 from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
-from .enrichment import WEATHER_READING_COLS, Dimension, PriorContext, WeatherReading, enrich_status
+from .enrichment import Dimension, enrich_status
+from .enrichment_context import EnrichmentContext
 from .kafka_io import (
     KafkaBatchReader,
     Ranges,
@@ -40,8 +41,6 @@ from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
-
-STATUS_CONTEXT_COLS = ["station_id", "fetched_at", "last_reported"]
 
 
 def safe_id(run_id: str) -> str:
@@ -169,22 +168,10 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     decoded = DecodedBatch.decode(records, batch_id, processed_at, cfg)
 
     as_of = decoded.as_of
-    status_times = [d.envelope.fetched_at for d in decoded.status]
-    all_times = status_times + [d.envelope.fetched_at for d in decoded.weather] + [as_of]
-    ctx_end = min(status_times) if status_times else as_of
-    prior = lake.CURATED_STATUS.read_window(storage, ctx_end - timedelta(minutes=cfg.context_minutes), ctx_end,
-                                            STATUS_CONTEXT_COLS, exclude_batch=batch_id) if decoded.status else None
-    prior_context = PriorContext.from_table(prior)
-    # Weather from earlier batches can be newer than this batch's first status row (partitions drain at
-    # different speeds), so read it up to the newest time seen here.
-    prior_weather_t = lake.CURATED_WEATHER.read_window(storage, ctx_end - timedelta(hours=3),
-                                                       max(all_times) + timedelta(milliseconds=1),
-                                                       WEATHER_READING_COLS, exclude_batch=batch_id)
+    context = EnrichmentContext.read(storage, decoded, batch_id, cfg)
     weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in decoded.weather]
-    weather_readings = (WeatherReading.from_table(prior_weather_t)
-                        + [WeatherReading.from_observation(d.value) for d in decoded.weather])
 
-    status_rows, counts = enrich_status(decoded.status, prior_context, _load_dim(storage), weather_readings,
+    status_rows, counts = enrich_status(decoded.status, context.prior, _load_dim(storage), context.weather,
                                         batch_id, processed_at, cfg)
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
