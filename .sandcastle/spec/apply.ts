@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { specSchema } from "./spec-plan";
-import { candidateLabelChange, ensureCandidateLabels } from "../shared/candidate-labels";
+import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
 import { required } from "../shared/common";
 
 /**
@@ -34,9 +34,5 @@ fs.writeFileSync(
 );
 
 ensureCandidateLabels(gh);
-const change = candidateLabelChange(spec.strength, current.labels.map((l) => l.name));
-const edit = ["issue", "edit", issue, "--body-file", file, "--remove-label", "agent:spec"];
-for (const l of change.add) edit.push("--add-label", l);
-for (const l of change.remove) edit.push("--remove-label", l);
-gh(edit);
+gh(specEditArgs(issue, file, spec.strength, current.labels.map((l) => l.name)));
 console.log(`Issue #${issue} now holds the full spec, labeled strength:${spec.strength}.`);
