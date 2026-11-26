@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 import pytest
 
 from citibike_contract import TOPIC_STATUS, Envelope, encode
-from citibike_pipeline.batch import parse_records
 from citibike_pipeline.config import PipelineConfig
+from citibike_pipeline.decoded_batch import DecodedBatch
 from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.metrics import Obs, station_state, window_metrics
 from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
@@ -26,16 +26,17 @@ def env(**over):
     return encode(Envelope(**fields))
 
 
-def test_parse_records_copies_envelope_provenance_into_the_raw_row():
+def test_decode_copies_envelope_provenance_into_the_raw_row():
     rec = Record(topic=TOPIC_STATUS, partition=0, offset=7, timestamp_ms=None, key="a", value=env())
-    parsed = parse_records([rec], "b1", datetime(2026, 10, 20, 14, 1, tzinfo=timezone.utc), CFG)
-    assert parsed.dlq_rows == []
-    raw = parsed.raw_rows[0]
-    assert {k: raw[k] for k in ("poll_id", "source", "source_url", "gbfs_version", "feed_last_updated",
-                                "fetched_at", "producer_version", "replay", "replayed_at")} == {
-        "poll_id": "p1", "source": "citibike", "source_url": "https://gbfs.example", "gbfs_version": "2.3",
-        "feed_last_updated": 1_760_968_790, "fetched_at": datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc),
-        "producer_version": "0.1", "replay": False, "replayed_at": None}
+    batch = DecodedBatch.decode([rec], "b1", datetime(2026, 10, 20, 14, 1, tzinfo=timezone.utc), CFG)
+    assert batch.dead_letters == ()
+    raw = batch.raw_rows[0]
+    assert (raw.poll_id, raw.source, raw.source_url, raw.gbfs_version, raw.feed_last_updated, raw.fetched_at,
+            raw.producer_version, raw.replay, raw.replayed_at) == (
+        "p1", "citibike", "https://gbfs.example", "2.3", 1_760_968_790,
+        datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc), "0.1", False, None)
+    assert (raw.kafka_topic, raw.kafka_offset, raw.event_type, raw.batch_id) == (
+        TOPIC_STATUS, 7, "station_status", "b1")
 
 
 def good_status(**over):

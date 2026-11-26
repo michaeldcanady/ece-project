@@ -20,7 +20,6 @@ WEAK = frozenset({"Any", "Dict", "dict"})
 BASELINE = {
     "citibike_contract/__init__.py": 2,
     "citibike_contract/envelope.py": 5,
-    "citibike_pipeline/batch.py": 9,
     "citibike_pipeline/kafka_io.py": 5,
     "citibike_pipeline/lake.py": 6,
     "citibike_pipeline/metrics.py": 4,
