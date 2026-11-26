@@ -66,7 +66,7 @@ class DecodedBatch:
         groups: DefaultDict[str, List[RawRow]] = defaultdict(list)
         for r in self.raw_rows:
             groups[r.event_type].append(r)
-        return groups
+        return {et: tuple(rows) for et, rows in groups.items()}
 
 
 def _parse(event_type: str, payload: JsonObject, fetched_s: float,
