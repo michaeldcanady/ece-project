@@ -24,7 +24,7 @@ specced issue joins the backlog and the scan's dedupe. It never adds `agent:impl
 A pull request is reviewed by `.github/workflows/pr-review.yml` on every push to it, in three jobs like `spec.yml`
 (`fetch` reads, `review` runs the model with only the OAuth token, `post` writes). It posts one `COMMENT` review with
 inline comments, and replies to and resolves its own earlier threads that the new code addresses. It never approves or
-requests changes, and it skips drafts and fork PRs. Which writes are allowed is decided in one pure module,
+requests changes, states whether the head is a one-way or two-way door, and it skips drafts and fork PRs. Which writes are allowed is decided in one pure module,
 `pr-review/review-actions.ts`.
 
 Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.

@@ -28,7 +28,7 @@ const context = (over: Partial<ReviewContext> = {}): ReviewContext => ({
   ...over,
 });
 
-const review = (over: Partial<Review> = {}): Review => ({ summary: "Looks fine.", comments: [], resolved: [], ...over });
+const review = (over: Partial<Review> = {}): Review => ({ summary: "Looks fine.", door: { kind: "two-way", reason: "Test only." }, comments: [], resolved: [], ...over });
 
 test("commentableLines returns new-side added and context lines, not removed lines or the gap between hunks", () => {
   assert.deepEqual([...commentableLines(PATCH)], [3, 4, 5, 6, 20, 21]);
@@ -129,4 +129,22 @@ test("botRepliedLast is true only when a marked bot reply follows the first comm
   assert.equal(botRepliedLast([bot, bot]), true);
   assert.equal(botRepliedLast([bot, bot, human]), false);
   assert.equal(botRepliedLast([bot, { author: "github-actions[bot]", body: "unmarked" }]), false);
+});
+
+test("a one-way review puts the door after the summary and before the unanchored comments and marker", () => {
+  const { body } = planActions(
+    review({
+      door: { kind: "one-way", reason: "Changes the Kafka key." },
+      comments: [{ path: "b.ts", line: 1, body: "off diff" }],
+    }),
+    context(),
+  );
+  const at = (s: string): number => body.indexOf(s);
+  assert.ok(at("Looks fine.") < at("**Door: one-way.** Changes the Kafka key."));
+  assert.ok(at("**Door: one-way.**") < at("`b.ts:1`"));
+  assert.ok(at("`b.ts:1`") < at(REVIEW_MARKER));
+});
+
+test("a two-way review renders its door", () => {
+  assert.match(planActions(review(), context()).body, /\*\*Door: two-way\.\*\*/);
 });

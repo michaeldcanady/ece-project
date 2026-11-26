@@ -1,3 +1,4 @@
+import { renderDoor } from "./door";
 import { BOT_LOGIN, MAX_COMMENTS, REVIEW_MARKER, type PriorThread, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
 
@@ -133,7 +134,7 @@ export const planActions = (review: Review, context: ReviewContext): ReviewActio
     resolutions.push({ threadId: thread.threadId, firstCommentId: thread.firstCommentId, reply: marked(r.reply) });
   }
 
-  const parts = [review.summary];
+  const parts = [review.summary, renderDoor(review.door)];
   if (unanchored.length > 0) parts.push(unanchored.join("\n"));
   parts.push(`${REVIEW_MARKER}\nsha=${context.headSha}`);
   return { commitId: context.headSha, body: parts.join("\n\n"), inline, resolutions };
