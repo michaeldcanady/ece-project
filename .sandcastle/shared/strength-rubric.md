@@ -1,0 +1,3 @@
+- `strong`: real friction, a real seam, clear leverage, low risk to the tests that exist
+- `explore`: a plausible gain that needs a judgment call the implementer must make
+- `speculative`: a hunch with no clear gain yet

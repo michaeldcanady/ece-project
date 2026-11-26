@@ -45,6 +45,7 @@ try {
     promptFile: here("prompt.md"),
     promptArgs: {
       ALREADY_FILED: alreadyFiled,
+      STRENGTH_RUBRIC: fs.readFileSync(path.join(import.meta.dirname, "../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(path.join(import.meta.dirname, "../shared/spec-format.md"), "utf8"),
     },
     output: sandcastle.Output.object({ tag: "output", schema: planSchema }),

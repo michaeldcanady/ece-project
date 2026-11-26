@@ -16,10 +16,12 @@ Python project; `mise run typecheck:agent` checks it and runs as part of `mise r
 
 A thin issue (a short note, such as a migrated backlog entry) is not implementable. Adding `agent:spec` runs
 `.github/workflows/spec.yml`, which expands it into the full spec and replaces the issue body, keeping the note
-under "Original note". `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
+under "Original note". It also rates the spec and labels the issue `agent:candidate` plus one `strength:*`, so a
+specced issue joins the backlog and the scan's dedupe. It never adds `agent:implement`: its job holds only
+`GITHUB_TOKEN`, and a human decides. `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
 `agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
 
-Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
+Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
 
 ## Facts a file will not tell you
 
