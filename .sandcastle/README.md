@@ -34,7 +34,8 @@ Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-p
 - Do not merge a change to `.github/workflows/` while an implement run is in flight. A push is refused if the
   agent's branch carries an older copy of a workflow file than `main` now has (PAT without `workflow` scope);
   re-add `agent:implement` to retry.
-- The scan dedupes against existing `agent:candidate` issues by title only.
+- The scan dedupes against every existing `agent:candidate` issue, open or closed, by title and by the files its
+  `## Files` section names.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 
 ## Setup
