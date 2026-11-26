@@ -114,10 +114,10 @@ jobs:
           gh pr create --base main --head "$BRANCH" --title "$ISSUE_TITLE" --body-file "$OUT/pr_body.md"
 
       - if: steps.preflight.outputs.go == 'true' && steps.agent.outcome == 'success'
-        name: Clear the in-progress label
+        name: Mark the issue as having a PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress
+        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label agent:pr-open
 
       # Any failed step after the preflight, not only the agent: a rejected push must not leave the issue in progress.
       - if: failure() && steps.preflight.outputs.go == 'true'

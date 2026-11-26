@@ -17,7 +17,7 @@ A thin issue (a short note, such as a migrated backlog entry) is not implementab
 under "Original note". `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
 `agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
 
-Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > a PR, or `agent:blocked`.
+Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
 
 ## Facts a file will not tell you
 
