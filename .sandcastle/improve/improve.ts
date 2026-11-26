@@ -18,10 +18,22 @@ try {
   const existing = existingSchema.parse(
     JSON.parse(fs.readFileSync(required("EXISTING_FILE"), "utf8")),
   );
+  // The title alone is not enough: the same idea comes back under a new title. The `## Files` section is the
+  // strongest signal that two proposals are about the same code, so it travels with the title.
+  const filesOf = (body: string): string =>
+    (
+      body.match(/^## Files\n([\s\S]*?)(?=^## |\n---|$(?![\s\S]))/m)?.[1] ??
+      body.match(/^\*\*Files:\*\*(.*(?:\n(?!\n).*)*)/m)?.[1] ?? // migrated notes
+      ""
+    )
+      .trim()
+      .slice(0, 600);
   const alreadyFiled =
     existing.length === 0
       ? "(none yet)"
-      : existing.map((i) => `- #${i.number} [${i.state}] ${i.title}`).join("\n");
+      : existing
+          .map((i) => `- #${i.number} [${i.state}] ${i.title}\n  Files: ${filesOf(i.body).replace(/\s+/g, " ") || "(not stated)"}`)
+          .join("\n");
 
   const plan = await runWithExtraction({
     name: "improve-scan",

@@ -22,5 +22,6 @@ export const existingSchema = z.array(
     number: z.number(),
     title: z.string(),
     state: z.string(),
+    body: z.string(),
   }),
 );

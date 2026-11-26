@@ -26,7 +26,8 @@ Follow the `improve-codebase-architecture` method, headless:
 
 # ALREADY FILED
 
-Do not propose any of these again, open or closed. A closed one was rejected.
+Do not propose any of these again, open or closed. A closed one was rejected. A proposal that would change the same
+files for the same reason is a repeat even under a new title: leave it out.
 
 {{ALREADY_FILED}}
 
