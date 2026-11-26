@@ -16,8 +16,8 @@ Read the change with `git diff {{BASE_SHA}}...{{HEAD_SHA}}`. The working tree is
    behaviour), and is it a one-way or two-way door. Read the surrounding code before judging a hunk.
 3. Comment only on lines of the new version that the diff shows, and only on what matters. Do not praise, and do
    not repeat a concern an open thread already raises.
-4. Name the door and give one reason. A change is a **one-way door** when undoing it would not restore the earlier
-   state:
+4. Name the door (`one-way` or `two-way`); the PR gets a label for it. For a one-way door, say why in `summary`.
+   A change is a **one-way door** when undoing it would not restore the earlier state:
    - changes to the wire contract (the Envelope shape, an Event type, the Kafka key or topic names), because
      messages already in Kafka and Replays keep the old form;
    - changes to how Lake table keys, Hour partitions or the Batch id are derived, because lake files already written

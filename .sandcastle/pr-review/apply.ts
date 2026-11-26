@@ -9,7 +9,7 @@ import { required } from "../shared/common";
 
 /**
  * The GitHub adapter on the way out, and the only step with write access. Both artifacts crossed a job boundary, so
- * they are parsed again. Replies to and resolves the threads the planner allows, then posts one COMMENT review (never
+ * they are parsed again. Labels the PR with its door, replies to and resolves the threads the planner allows, then posts one COMMENT review (never
  * an approval or a request for changes). The review goes last because it marks the head as reviewed: if it exists,
  * everything before it succeeded, so a rerun cannot repeat or skip any write.
  */
@@ -50,6 +50,10 @@ for (const r of actions.resolutions) {
   gh(["api", "graphql", "-f", `query=${RESOLVE}`, "-F", `id=${r.threadId}`]);
   console.log(`Resolved thread ${r.threadId}.`);
 }
+
+// Idempotent, so a rerun is harmless; before the review, which marks the head as reviewed.
+gh(["pr", "edit", String(context.pr), "--add-label", actions.door.add, "--remove-label", actions.door.remove]);
+console.log(`Labelled the PR ${actions.door.add}.`);
 
 const payload = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-")), "review.json");
 fs.writeFileSync(
