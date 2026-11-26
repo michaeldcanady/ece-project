@@ -121,5 +121,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PLAN_DIR: ${{ runner.temp }}/plan
+          AGENT_PAT: ${{ secrets.AGENT_PAT }} # labels strong candidates agent:implement; GITHUB_TOKEN would not start implement.yml
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
         run: npx --prefix .sandcastle tsx .sandcastle/improve/apply.ts
