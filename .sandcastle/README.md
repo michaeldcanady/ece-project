@@ -17,7 +17,7 @@ A thin issue (a short note, such as a migrated backlog entry) is not implementab
 under "Original note". `implement.yml` refuses an issue with no `## Acceptance criteria` section and says to run
 `agent:spec` first. The section format lives in one place, `shared/spec-format.md`.
 
-Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > a PR, or `agent:blocked`.
+Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-progress` > `agent:pr-open`, or `agent:blocked`.
 
 ## Facts a file will not tell you
 
@@ -27,6 +27,9 @@ Labels move `agent:candidate` > (`agent:spec`) > `agent:implement` > `agent:in-p
   `.githooks/`: `implement/implement.ts` fails the run if the diff touches them.
 - The GitHub runner is the sandbox (`noSandbox()`), so there is no Docker image.
 - DAG tests skip on the runner (no Airflow container); the PR body says so.
+- Do not merge a change to `.github/workflows/` while an implement run is in flight. A push is refused if the
+  agent's branch carries an older copy of a workflow file than `main` now has (PAT without `workflow` scope);
+  re-add `agent:implement` to retry.
 - The scan dedupes against existing `agent:candidate` issues by title only.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 

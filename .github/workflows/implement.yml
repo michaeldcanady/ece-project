@@ -106,16 +106,21 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           set -euo pipefail
-          git push "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          if ! git push "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}" 2> "$OUT/push_err.txt"; then
+            { echo "The push was rejected:"; cat "$OUT/push_err.txt"; } > "$OUT/failure_reason.txt"
+            cat "$OUT/push_err.txt"
+            exit 1
+          fi
           gh pr create --base main --head "$BRANCH" --title "$ISSUE_TITLE" --body-file "$OUT/pr_body.md"
 
       - if: steps.preflight.outputs.go == 'true' && steps.agent.outcome == 'success'
-        name: Clear the in-progress label
+        name: Mark the issue as having a PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress
+        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label agent:pr-open
 
-      - if: always() && steps.preflight.outputs.go == 'true' && steps.agent.outcome != 'success'
+      # Any failed step after the preflight, not only the agent: a rejected push must not leave the issue in progress.
+      - if: failure() && steps.preflight.outputs.go == 'true'
         name: Block the issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
