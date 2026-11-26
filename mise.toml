@@ -80,8 +80,8 @@ description = "Typecheck the TypeScript agent workflows in .sandcastle/ (install
 run = ["npm ci --prefix .sandcastle --no-audit --no-fund", "npm run --prefix .sandcastle typecheck"]
 
 [tasks.lint]
-description = "Lint: ruff, the strong-types, layer and agent-label checks, then actionlint on the workflows"
-run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_layers.py", "uv run python scripts/check_agent_labels.py", "actionlint"]
+description = "Lint: ruff, the strong-types, mypy, layer and agent-label checks, then actionlint on the workflows"
+run = ["uv run ruff check .", "uv run python scripts/check_strong_types.py", "uv run python scripts/check_mypy.py", "uv run python scripts/check_layers.py", "uv run python scripts/check_agent_labels.py", "actionlint"]
 
 [tasks.test]
 description = "Run the tests (no network or broker needed)"
