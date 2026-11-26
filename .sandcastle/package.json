@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Sandcastle agent workflows run by GitHub Actions (see .github/workflows/improve.yml and implement.yml). Kept apart from the Python project: nothing here is imported by it.",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test shared/*.test.ts pr-review/*.test.ts"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.14.0",
