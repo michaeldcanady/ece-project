@@ -44,8 +44,11 @@ LAYER_MAP = {
     "citibike_pipeline.validation": "pipeline:core",
     # pipeline: infrastructure (Kafka, storage, the lake)
     "citibike_pipeline.batch_log": "pipeline:infrastructure",
+    "citibike_pipeline.dead_letter_row": "pipeline:infrastructure",
+    "citibike_pipeline.decoded_batch": "pipeline:infrastructure",
     "citibike_pipeline.kafka_io": "pipeline:infrastructure",
     "citibike_pipeline.lake": "pipeline:infrastructure",
+    "citibike_pipeline.raw_row": "pipeline:infrastructure",
     "citibike_pipeline.schemas": "pipeline:infrastructure",
     "citibike_pipeline.serving": "pipeline:infrastructure",
     "citibike_pipeline.storage": "pipeline:infrastructure",
