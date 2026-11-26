@@ -1,19 +1,15 @@
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { fail, required, writeJson } from "../shared/common";
+import { gh, readReviews } from "./github-reads";
 import { ownedOpenThreads, reviewedShasOf } from "./review-actions";
 import { reviewContextSchema, type ReviewContext } from "./review-context";
 
 /**
- * The GitHub boundary on the way in: the only place raw GitHub JSON is read. Writes context.json to OUTPUT_DIR.
+ * The GitHub boundary on the way in: with github-reads.ts, the only place raw GitHub JSON is read. Writes context.json to OUTPUT_DIR.
  * PR text is untrusted, so it goes to a file and is never put into shell or workflow expressions.
  */
 
-const gh = (args: string[]): string =>
-  execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 256 * 1024 * 1024 });
-
 const filesSchema = z.array(z.array(z.object({ filename: z.string(), patch: z.string().optional() })));
-const reviewsSchema = z.array(z.array(z.object({ body: z.string().nullable(), user: z.object({ login: z.string() }).nullable() })));
 const threadsSchema = z.object({
   data: z.object({
     repository: z.object({
@@ -67,7 +63,6 @@ try {
   const pr = Number(required("PR_NUMBER"));
 
   const files = filesSchema.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${pr}/files`]))).flat();
-  const reviews = reviewsSchema.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${pr}/reviews`]))).flat();
   const pullRequest = threadsSchema.parse(
     JSON.parse(
       gh(["api", "graphql", "-f", `query=${QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${pr}`]),
@@ -93,7 +88,7 @@ try {
     })),
     pullRequest.author?.login ?? "",
   );
-  const reviewedShas = reviewedShasOf(reviews.map((r) => ({ author: r.user?.login ?? "ghost", body: r.body ?? "" })));
+  const reviewedShas = reviewedShasOf(readReviews(repo, pr));
 
   const context: ReviewContext = reviewContextSchema.parse({
     pr,

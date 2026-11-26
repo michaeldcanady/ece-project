@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alreadyReviewed, commentableLines, ownedOpenThreads, planActions, reviewedShasOf, type RawThread } from "./review-actions";
+import { alreadyReviewed, botRepliedLast, commentableLines, ownedOpenThreads, planActions, reviewedShasOf, type RawThread } from "./review-actions";
 import { REVIEW_MARKER, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
 
@@ -122,12 +122,11 @@ test("reviewedShasOf reads sha only from marked reviews by the bot", () => {
   );
 });
 
-test("a resolution carries no reply when the bot already replied last, but a lone first comment still gets one", () => {
+test("botRepliedLast is true only when a marked bot reply follows the first comment", () => {
   const bot = { author: "github-actions[bot]", body: `done ${REVIEW_MARKER}` };
-  const thread = { threadId: "T1", firstCommentId: 11, path: "a.ts", line: 4 };
-  const r = review({ resolved: [{ threadId: "T1", reply: "Fixed." }] });
-  const replied = planActions(r, context({ openThreads: [{ ...thread, comments: [bot, bot] }] }));
-  assert.equal(replied.resolutions[0]?.reply, null);
-  const lone = planActions(r, context({ openThreads: [{ ...thread, comments: [bot] }] }));
-  assert.equal(lone.resolutions[0]?.reply, `Fixed.\n\n${REVIEW_MARKER}`);
+  const human = { author: "alice", body: "why?" };
+  assert.equal(botRepliedLast([bot]), false);
+  assert.equal(botRepliedLast([bot, bot]), true);
+  assert.equal(botRepliedLast([bot, bot, human]), false);
+  assert.equal(botRepliedLast([bot, { author: "github-actions[bot]", body: "unmarked" }]), false);
 });
