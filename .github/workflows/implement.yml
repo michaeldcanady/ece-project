@@ -1,42 +1,89 @@
 name: implement
 
-# Adding the `agent:implement` label to an issue implements its spec, reviews it, and opens a pull request that
-# closes the issue, but only if `mise run check` is green after both passes. Otherwise the issue is labeled
-# `agent:blocked` with the reason in a comment, and no PR opens.
+# Implements one queued issue per run, reviews it, and opens a pull request that closes the issue, but only if
+# `mise run check` is green after both passes.
 #
-# The agent step holds only CLAUDE_CODE_OAUTH_TOKEN. Credentials are not persisted by checkout; the push and the
-# PR use AGENT_PAT in their own steps. A PAT, not GITHUB_TOKEN, so that check.yml runs on the PR.
+# The queue is every open issue labeled `agent:implement`. Runs are serialized repo-wide, and the first step picks
+# the best queued issue (`priority:high`, then human requests, then oldest; see implement/queue.ts). The run does not
+# take its issue from the event: GitHub keeps only one pending run per concurrency group and cancels the rest, so a
+# run started for issue 7 may be the one that must implement issue 3. After each run, a dispatch starts the next one
+# while issues remain queued.
+#
+# A failed, cancelled or timed-out run gets one recovery run: the issue gets `agent:recovered` and goes back in the
+# queue, and the next run reads the failure comment. A second failure labels the issue `agent:blocked`. To retry a
+# blocked issue, remove `agent:blocked` and `agent:recovered`, then add `agent:implement`.
+#
+# The agent step holds only CLAUDE_CODE_OAUTH_TOKEN. Credentials are not persisted by checkout; the push, the PR and
+# the recovery label use AGENT_PAT in their own steps. A PAT, not GITHUB_TOKEN, so that check.yml runs on the PR and
+# the recovery label starts the next run.
 
 on:
   issues:
     types: [labeled]
+  workflow_dispatch:
 
 jobs:
   implement:
-    if: github.event.label.name == 'agent:implement'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent:implement'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: implement-${{ github.event.issue.number }}
+      group: implement
       cancel-in-progress: false
     permissions:
       contents: read
       issues: write
       pull-requests: read
+      actions: write
     env:
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-      BRANCH: agent/issue-${{ github.event.issue.number }}
       GH_REPO: ${{ github.repository }}
       MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
     steps:
-      - name: Preflight
-        id: preflight
+      # The pick needs the repo and Node, so checkout and the install come before it. Only a number goes to
+      # GITHUB_ENV; issue text never does.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Sandcastle and Claude Code
+        run: |
+          npm ci --prefix .sandcastle
+          npm install -g @anthropic-ai/claude-code
+
+      - name: Pick the next issue
+        id: pick
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # `runner` is not available in job-level env, so the output dir is set here for the later steps.
           echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+          gh issue list --label agent:implement --state open --limit 200 \
+            --json number,createdAt,labels > "$RUNNER_TEMP/queue.json"
+          number=$(QUEUE_FILE="$RUNNER_TEMP/queue.json" npx --prefix .sandcastle tsx .sandcastle/implement/pick.ts)
+          if [ -z "$number" ]; then
+            echo "The implement queue is empty."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ISSUE_NUMBER=$number" >> "$GITHUB_ENV"
+            echo "BRANCH=agent/issue-$number" >> "$GITHUB_ENV"
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Preflight
+        id: preflight
+        if: steps.pick.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `agent:recovered` stays: it records that the recovery run is the one now running.
           gh issue edit "$ISSUE_NUMBER" --remove-label agent:implement || true
           gh issue edit "$ISSUE_NUMBER" --remove-label agent:blocked || true
           existing=$(gh pr list --state open --json url,headRefName \
@@ -55,13 +102,6 @@ jobs:
           fi
 
       - if: steps.preflight.outputs.go == 'true'
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-          persist-credentials: false
-
-      - if: steps.preflight.outputs.go == 'true'
         run: |
           git config user.name "sandcastle-agent[bot]"
           git config user.email "sandcastle-agent[bot]@users.noreply.github.com"
@@ -72,15 +112,6 @@ jobs:
         uses: jdx/mise-action@v2
       - if: steps.preflight.outputs.go == 'true'
         run: mise run sync
-      - if: steps.preflight.outputs.go == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - if: steps.preflight.outputs.go == 'true'
-        name: Install Sandcastle and Claude Code
-        run: |
-          npm ci --prefix .sandcastle
-          npm install -g @anthropic-ai/claude-code
 
       # The issue text is untrusted input: it goes to a JSON file, never into shell or `${{ }}`.
       - if: steps.preflight.outputs.go == 'true'
@@ -103,9 +134,10 @@ jobs:
         env:
           AGENT_PAT: ${{ secrets.AGENT_PAT }}
           GH_TOKEN: ${{ secrets.AGENT_PAT }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           set -euo pipefail
+          # Read the title here, not from the event: the run picked this issue, the event may name another.
+          ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq .title)
           # Carry main's current workflow files: a PAT without `workflow` scope cannot push a branch whose
           # .github/workflows/ differs from main's. The agent cannot touch .github/, so only other files can conflict.
           git fetch "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" main
@@ -125,17 +157,41 @@ jobs:
         name: Mark the issue as having a PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label agent:pr-open
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label agent:pr-open
 
-      # Any failed step after the preflight, not only the agent: a rejected push must not leave the issue in progress.
-      - if: failure() && steps.preflight.outputs.go == 'true'
-        name: Block the issue
+      # Any failed, cancelled or timed-out step after the preflight, not only the agent: a rejected push must not leave
+      # the issue in progress. The first failure gets a recovery run; the second blocks the issue.
+      - if: (failure() || cancelled()) && steps.preflight.outputs.go == 'true'
+        name: Recover or block the issue
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+        run: |
+          reason="$OUT/failure_reason.txt"
+          mkdir -p "$OUT"
+          [ -s "$reason" ] || echo "The run ended before it could say why (failed, cancelled or timed out). See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID" > "$reason"
+          recovered=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | index("agent:recovered") != null')
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress || true
+          if [ "$recovered" = "true" ]; then
+            gh issue edit "$ISSUE_NUMBER" --add-label agent:blocked
+            summary='The agent could not finish this issue on its recovery run either, so no PR was opened. The issue is blocked.'
+          else
+            summary='The agent could not finish this issue, so no PR was opened. It runs once more, reading this comment.'
+          fi
+          { echo "$summary"; echo; echo '```'; cat "$reason"; echo '```'; } > "$OUT/comment.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$OUT/comment.md"
+          if [ "$recovered" != "true" ]; then
+            gh issue edit "$ISSUE_NUMBER" --add-label agent:recovered
+            # Last, so the comment is in place when the next run reads the issue.
+            gh issue edit "$ISSUE_NUMBER" --add-label agent:implement
+          fi
+
+      # Drain the queue: runs are serialized, so start the next one while issues remain.
+      # Gated on the pick: a run that failed before it (checkout, install) would otherwise dispatch itself forever.
+      - if: always() && steps.pick.outcome == 'success'
+        name: Start the next run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          reason="$OUT/failure_reason.txt"
-          [ -s "$reason" ] || echo "The run ended before it could say why. See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID" > "$reason"
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress || true
-          gh issue edit "$ISSUE_NUMBER" --add-label agent:blocked
-          { echo 'The nightly agent could not finish this issue, so no PR was opened.'; echo; echo '```'; cat "$reason"; echo '```'; } > "$OUT/comment.md"
-          gh issue comment "$ISSUE_NUMBER" --body-file "$OUT/comment.md"
+          queued=$(gh issue list --label agent:implement --state open --json number --jq length)
+          if [ "$queued" -gt 0 ]; then gh workflow run implement.yml; fi

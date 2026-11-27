@@ -23,7 +23,6 @@ import {
 const ISSUE_FILE = required("ISSUE_FILE"); // JSON from `gh issue view --json title,body,comments`
 const ISSUE_NUMBER = required("ISSUE_NUMBER");
 const BRANCH = required("BRANCH");
-const MAX_ITERATIONS = 5;
 
 const here = (file: string) => path.join(import.meta.dirname, file);
 
@@ -69,7 +68,8 @@ try {
   await sandcastle.run({
     ...common,
     name: `implement-#${ISSUE_NUMBER}`,
-    maxIterations: MAX_ITERATIONS,
+    // One attempt. A failed run gets one recovery run (see implement.yml), not more iterations here.
+    maxIterations: 1,
     promptFile: here("prompt.md"),
     promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, WRITING_STYLE: writingStyle() },
   });

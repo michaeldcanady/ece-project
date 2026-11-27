@@ -7,6 +7,9 @@ do not ask. The issue is the spec; stay inside its scope and its "Out of scope" 
 
 {{ISSUE_CONTEXT}}
 
+If a comment above says a previous run could not finish this issue, this is the recovery attempt and the last one.
+Read that comment, find its cause, and fix that cause first. An earlier branch is not available: start from `main`.
+
 # CONTEXT
 
 Read before editing: `CLAUDE.md`, `GLOSSARY.md`, `CODING_STANDARDS.md`, `.claude/rules/*`, and `docs/adr/` if

@@ -1,0 +1,20 @@
+name: Request
+description: Ask the Factory to build a change or fix a bug
+# `agent:spec` starts spec.yml, which expands what you write into a full spec. `request` ranks this issue above the
+# nightly scan's candidates in the implement queue. A human creates the issue, so the labels start the workflow.
+labels: ["request", "agent:spec"]
+body:
+  - type: textarea
+    id: note
+    attributes:
+      label: What do you want?
+      description: Say what is wrong or what you want built, in a few sentences. The spec run writes the rest.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: How would you know it works?
+      description: For a bug, the steps that show it. A failing test comes first in the spec.
+    validations:
+      required: false

@@ -27,8 +27,8 @@ HEADING_USERS: Tuple[Tuple[str, Pattern[str]], ...] = (
     (".github/workflows/implement.yml", re.compile(r'contains\("(##[^"]+)"\)')),
 )
 
-LABEL = re.compile(r"\b(?:agent:[a-z-]+|strength:[a-z]+|door:[a-z-]+)")
-CREATED = re.compile(r'"((?:agent|strength|door):[a-z-]+)\|[^|"]*\|[0-9a-fA-F]{6}"')
+LABEL = re.compile(r"\b(?:agent:[a-z-]+|strength:[a-z]+|door:[a-z-]+|priority:[a-z]+)")
+CREATED = re.compile(r'"((?:agent|strength|door|priority):[a-z-]+|request)\|[^|"]*\|[0-9a-fA-F]{6}"')
 FORMAT_HEADING = re.compile(r"`(##[^`]+)`")
 
 

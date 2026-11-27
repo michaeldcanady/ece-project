@@ -17,7 +17,8 @@ SETUP_SH = """\
   for spec in \\
     "agent:candidate|Filed by the nightly run|0e8a16" \\
     "agent:implement|Add to start the implement workflow|1d76db" \\
-    "strength:strong|Candidate strength: strong|5319e7"; do
+    "strength:strong|Candidate strength: strong|5319e7" \\
+    "priority:high|Jump the implement queue|b60205"; do
     IFS='|' read -r name desc color <<<"$spec"
   done
 """
@@ -59,6 +60,12 @@ def test_a_used_label_missing_from_setup_sh_gives_one_finding_naming_file_and_la
     assert len(findings) == 1
     assert findings[0].path == ".github/workflows/spec.yml"
     assert "agent:spec" in findings[0].message
+
+
+def test_a_priority_label_must_be_created_like_an_agent_label(tmp_path: Path):
+    files = {".github/workflows/implement.yml": IMPLEMENT + "# priority:high agent:recovered\n"}
+    findings = _check(tmp_path, files)
+    assert [f.message.split()[1] for f in findings] == ["agent:recovered"]
 
 
 def test_labels_under_node_modules_are_skipped(tmp_path: Path):

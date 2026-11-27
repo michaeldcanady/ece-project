@@ -116,6 +116,11 @@ _Avoid_: Kafka identity (that names a stored message; the key groups messages)
 
 ## The agent workflows
 
+**Factory**:
+The whole loop from an issue to a reviewed pull request: intake, spec, implementation and review. A human reviews the
+pull request; nothing merges without that.
+_Avoid_: pipeline (that names the data pipeline), agent workflows (that names its parts)
+
 **Door**:
 How reversible a change is. A one-way door cannot be undone by reverting it; a two-way door can.
 _Avoid_: risk, impact
