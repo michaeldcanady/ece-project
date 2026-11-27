@@ -1,8 +1,11 @@
 """Hourly: merge the per-batch files of completed hours (older than 2 h) into one file per hour."""
 from datetime import timedelta
+from typing import Dict
 
 from _common import DAG_KWARGS, default_args
 from airflow.decorators import dag, task
+
+from citibike_pipeline.lake import CompactHour
 
 
 @dag(
@@ -14,7 +17,7 @@ from airflow.decorators import dag, task
 )
 def citibike_compaction() -> None:
     @task
-    def compact():
+    def compact() -> Dict[str, CompactHour]:
         from citibike_pipeline import lake, runtime
         _, storage = runtime.build()
         return lake.compact_due(storage)

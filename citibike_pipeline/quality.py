@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional
 
 import pyarrow as pa
 import pyarrow.compute as pc
+from pydantic import BaseModel, Field
 
 from citibike_contract import InvalidPollLog, PollLog
 
@@ -27,7 +28,7 @@ STATUS_COLS = ["station_id", "fetched_at", "age_s", "is_stale", "is_repeat", "is
                "is_unknown_station", "num_bikes_available", "is_installed", "is_renting", "is_returning"]
 
 
-def _day_bounds(day: date):
+def _day_bounds(day: date) -> tuple[datetime, datetime]:
     start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
     return start, start + timedelta(days=1)
 
@@ -66,10 +67,21 @@ def _poll_log_section(storage: Storage, cfg: PipelineConfig, start: datetime, en
     return out
 
 
-def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
+class SectionStatus(BaseModel):
+    observations: int
+    distinct_stations: int
+    stale_share: Optional[float]
+    repeat_share: Optional[float]
+    out_of_order: int
+    unknown_station_rows: int
+    age_cdf: Dict[str, float]
+    top_empty_stations: List[Dict[str, Any]]
+    empty_share_by_hour_utc: Dict[str, float]
+
+def _status_section(storage: Storage, start: datetime) -> SectionStatus:
     rows = stale = repeats = ooo = unknown = 0
     stations = set()
-    age_le = Counter()                       # edge -> rows with age <= edge
+    age_le: Counter = Counter()                       # edge -> rows with age <= edge
     empty_by_station: Counter = Counter()
     obs_by_station: Counter = Counter()
     empty_by_hour: Counter = Counter()
@@ -98,41 +110,34 @@ def _status_section(storage: Storage, start: datetime) -> Dict[str, Any]:
 
     top = [{"station_id": sid, "empty_share": round(n / float(obs_by_station[sid]), 4), "empty_observations": n}
            for sid, n in empty_by_station.most_common(10)]
-    return {
-        "observations": rows, "distinct_stations": len(stations),
-        "stale_share": round(stale / float(rows), 4) if rows else None,
-        "repeat_share": round(repeats / float(rows), 4) if rows else None,
-        "out_of_order": ooo, "unknown_station_rows": unknown,
-        "age_cdf": {str(e): round(age_le[e] / float(rows), 4) for e in AGE_EDGES_S} if rows else {},
-        "top_empty_stations": top,
-        "empty_share_by_hour_utc": {str(h): round(empty_by_hour[h] / float(obs_by_hour[h]), 4)
-                                    for h in sorted(obs_by_hour)},
-    }
+    return SectionStatus(
+        observations=rows,
+        distinct_stations=len(stations),
+        stale_share=round(stale / float(rows), 4) if rows else None,
+        repeat_share=round(repeats / float(rows), 4) if rows else None,
+        out_of_order=ooo,
+        unknown_station_rows=unknown,
+        age_cdf={str(e): round(age_le[e] / float(rows), 4) for e in AGE_EDGES_S} if rows else {},
+        top_empty_stations=top,
+        empty_share_by_hour_utc={str(h): round(empty_by_hour[h] / float(obs_by_hour[h]), 4)
+                                 for h in sorted(obs_by_hour)},
+    )
 
 
-@dataclass(frozen=True)
-class BatchLatency:
-    median_of_batch_p50: Optional[float]
-    p95_of_batch_p95: Optional[float]
-    max: Optional[float]
+class BatchLatency(BaseModel):
+    median_of_batch_p50: Optional[float] = None
+    p95_of_batch_p95: Optional[float] = None
+    max: Optional[float] = None
 
 
-@dataclass(frozen=True)
-class BatchSection:
+class BatchSection(BaseModel):
     """The day's Batch log entries, summed. Only built when the day had at least one batch."""
-    batches: int
-    records_read: int
-    dlq_rows: int
-    duplicates_dropped: int
-    replay_rows: int
-    latency_s: BatchLatency
-
-    def to_json(self) -> Mapping[str, object]:
-        """The report's `batches` object: the same keys, in the same order, as ever."""
-        return {"batches": self.batches, "records_read": self.records_read, "dlq_rows": self.dlq_rows,
-                "duplicates_dropped": self.duplicates_dropped, "replay_rows": self.replay_rows,
-                "latency_s": {"median_of_batch_p50": self.latency_s.median_of_batch_p50,
-                              "p95_of_batch_p95": self.latency_s.p95_of_batch_p95, "max": self.latency_s.max}}
+    batches: int = 0
+    records_read: int = 0
+    dlq_rows: int = 0
+    duplicates_dropped: int = 0
+    replay_rows: int = 0
+    latency_s: BatchLatency = Field(default_factory=BatchLatency)
 
 
 def _batch_section(storage: Storage, start: datetime) -> Optional[BatchSection]:
@@ -151,71 +156,100 @@ def _batch_section(storage: Storage, start: datetime) -> Optional[BatchSection]:
             max=max((r.latencies.max_s for r in rows if r.latencies.max_s is not None), default=None)))
 
 
-def _dlq_section(storage: Storage, start: datetime) -> Dict[str, Any]:
+class DLQSection(BaseModel):
+    total: int
+    by_reason: Dict[str, int]
+
+def _dlq_section(storage: Storage, start: datetime) -> DLQSection:
     reasons: Counter = Counter()
     for h in range(24):
         for key in storage.list(lake.partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
             if key.endswith(".parquet"):
                 reasons.update(read_parquet(storage, key, columns=["reason"])["reason"].to_pylist())
-    return {"total": sum(reasons.values()), "by_reason": dict(reasons.most_common())}
+    return DLQSection(total=sum(reasons.values()), by_reason=dict(reasons.most_common()))
 
 
-def verdict(report: Dict[str, Any]) -> str:
-    status = report["station_observations"]
-    poll = report["polls"].get("station_status", {})
-    if not status["observations"]:
-        return "fail"
+class Verdict(Enum):
+    OK = "ok"
+    WARN = "warn"
+    FAIL = "fail"
+
+def verdict(report: DailyQualityReport) -> Verdict:
+    status = report.station_observations
+    poll = report.polls.get("station_status", {})
+    if not status.observations:
+        return Verdict.FAIL
     completeness = poll.get("completeness", 0)
-    dlq_rate = report["dlq"]["total"] / float(max(report["batches"].get("records_read", 0), 1))
+    records_read = report.batches.records_read if report.batches else 0
+    dlq_rate = report.dlq.total / float(max(records_read, 1))
     if completeness < 0.5:
-        return "fail"
-    if completeness < 0.95 or (status["stale_share"] or 0) > 0.05 or dlq_rate > 0.01:
-        return "warn"
-    return "ok"
+        return Verdict.FAIL
+    if completeness < 0.95 or (status.stale_share or 0) > 0.05 or dlq_rate > 0.01:
+        return Verdict.WARN
+    return Verdict.OK
+
+class DailyQualityReport(BaseModel):
+    day_utc: str
+    thresholds: DailyQualityReportThresholds
+    polls: Dict[str, Any]
+    station_observations: SectionStatus
+    batches: Optional[BatchSection]
+    dlq: DLQSection
+    verdict: Optional[Verdict] = None
+
+    def to_json(self) -> Mapping[str, object]:
+        """The report.json object: a day with no batches reports just `{"batches": 0}`, as ever."""
+        out = self.model_dump(mode="json")
+        return {**out, "batches": {"batches": 0}} if self.batches is None else out
 
 
-def daily_quality(storage: Storage, cfg: PipelineConfig, day: date) -> Dict[str, Any]:
+class DailyQualityReportThresholds(BaseModel):
+    stale_minutes: float
+    gap_threshold_s: int
+
+def daily_quality(storage: Storage, cfg: PipelineConfig, day: date) -> DailyQualityReport:
     start, end = _day_bounds(day)
     batches = _batch_section(storage, start)
-    report = {
-        "day_utc": day.isoformat(), "thresholds": {"stale_minutes": cfg.stale_minutes,
-                                                   "gap_threshold_s": cfg.gap_threshold_s},
-        "polls": _poll_log_section(storage, cfg, start, end),
-        "station_observations": _status_section(storage, start),
-        "batches": batches.to_json() if batches else {"batches": 0},
-        "dlq": _dlq_section(storage, start),
-    }
-    report["verdict"] = verdict(report)
-    log.info("daily quality %s: verdict=%s", day.isoformat(), report["verdict"])
+    report = DailyQualityReport(
+        day_utc=day.isoformat(),
+        thresholds=DailyQualityReportThresholds(stale_minutes=cfg.stale_minutes, gap_threshold_s=cfg.gap_threshold_s),
+        polls=_poll_log_section(storage, cfg, start, end),
+        station_observations=_status_section(storage, start),
+        batches=batches,
+        dlq=_dlq_section(storage, start),
+    )
+    report.verdict = verdict(report)
+    log.info("daily quality %s: verdict=%s", day.isoformat(), report.verdict)
     base = "quality/daily/dt=%s" % day.isoformat()
-    put_json(storage, base + "/report.json", report)
+    put_json(storage, base + "/report.json", report.to_json())
     storage.put(base + "/report.md", render_markdown(report).encode("utf-8"))
     return report
 
 
-def render_markdown(r: Dict[str, Any]) -> str:
-    s, ss = r["station_observations"], r["polls"].get("station_status", {})
+def render_markdown(r: DailyQualityReport) -> str:
+    s, ss, b = r.station_observations, r.polls.get("station_status", {}), r.batches
     lines = [
-        "# Data quality report, %s (UTC)" % r["day_utc"], "", "**Verdict: %s**" % r["verdict"].upper(), "",
+        "# Data quality report, %s (UTC)" % r.day_utc, "",
+        "**Verdict: %s**" % (r.verdict.value if r.verdict else "").upper(), "",
         "## Stream completeness",
         "- station_status polls logged: %s of %s expected (%s)" % (
             ss.get("polls_logged"), ss.get("expected_polls"), ss.get("completeness")),
-        "- gaps over %ss: %s (total %ss)" % (r["thresholds"]["gap_threshold_s"], ss.get("gaps_over_threshold"),
+        "- gaps over %ss: %s (total %ss)" % (r.thresholds.gap_threshold_s, ss.get("gaps_over_threshold"),
                                            ss.get("gap_seconds_total")),
         "- outcomes: %s" % ss.get("outcomes"), "",
         "## Observations",
-        "- rows: %s across %s stations" % (s["observations"], s["distinct_stations"]),
-        "- stale share (threshold %s min): %s" % (r["thresholds"]["stale_minutes"], s["stale_share"]),
+        "- rows: %s across %s stations" % (s.observations, s.distinct_stations),
+        "- stale share (threshold %s min): %s" % (r.thresholds.stale_minutes, s.stale_share),
         "- repeat share: %s, out-of-order: %s, unknown station rows: %s" % (
-            s["repeat_share"], s["out_of_order"], s["unknown_station_rows"]),
-        "- age CDF (seconds -> share of rows at or below): %s" % s["age_cdf"], "",
+            s.repeat_share, s.out_of_order, s.unknown_station_rows),
+        "- age CDF (seconds -> share of rows at or below): %s" % s.age_cdf, "",
         "## Pipeline",
         "- batches: %s, DLQ rows: %s, dropped delivery duplicates: %s" % (
-            r["batches"].get("batches"), r["dlq"]["total"], r["batches"].get("duplicates_dropped")),
-        "- latency (s): %s" % r["batches"].get("latency_s"),
-        "- DLQ reasons: %s" % r["dlq"]["by_reason"], "",
+            b.batches if b else 0, r.dlq.total, b.duplicates_dropped if b else None),
+        "- latency (s): %s" % (b.latency_s.model_dump() if b else None),
+        "- DLQ reasons: %s" % r.dlq.by_reason, "",
         "## Most frequently empty stations",
     ]
     lines += ["- %s: %s of observations, %s" % (t["station_id"], t["empty_share"], t["empty_observations"])
-              for t in s["top_empty_stations"]]
+              for t in s.top_empty_stations]
     return "\n".join(lines) + "\n"
