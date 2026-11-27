@@ -14,10 +14,10 @@ import pyarrow as pa
 
 from .config import PipelineConfig
 from .obs import Obs
-from .station_state import StateName, station_state
+from .station_state import StationState, station_state
 from .station_window import StationWindow
 from .timeutil import epoch, floor_5min
-from .window_metrics import AtRisk, WindowMetrics
+from .window_metrics import WindowMetrics
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
 STATUS_ROW_COLS = [
@@ -53,31 +53,6 @@ class StatusRow:
     def from_table(table: pa.Table) -> List[StatusRow]:
         cols = {c: table[c].to_pylist() for c in STATUS_ROW_COLS}
         return [StatusRow(**{c: cols[c][i] for c in STATUS_ROW_COLS}) for i in range(table.num_rows)]
-
-
-@dataclass(frozen=True)
-class StationState:
-    station_id: str
-    station_name: Optional[str]
-    lat: Optional[float]
-    lon: Optional[float]
-    capacity: Optional[int]
-    state: StateName
-    num_bikes_available: int
-    num_ebikes_available: int
-    num_docks_available: int
-    last_reported: int
-    age_s: int
-    observed_at: datetime
-    net_change_15m: Optional[int]
-    rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk: Optional[AtRisk]
-    temperature_c: Optional[float]
-    precipitation_mm: Optional[float]
-    as_of: datetime
-    batch_id: str
 
 
 @dataclass(frozen=True)
