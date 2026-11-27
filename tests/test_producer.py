@@ -231,6 +231,16 @@ def test_weather_job():
     assert len(by_topic(prod, TOPIC_WEATHER)) == 1   # unchanged observation skipped
 
 
+def test_a_weather_observation_without_a_time_is_published_not_skipped():
+    prod = FakeProducer()
+    cfg = Config()
+    body = {"current": {"time": None, "interval": 900, "temperature_2m": 14.2}}
+    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result(body)]))
+    assert job.run_once() is True
+    assert len(by_topic(prod, TOPIC_WEATHER)) == 1
+    assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["outcome"] == "ok"
+
+
 DISCOVERY_BODY = {"version": "2.3", "data": {"en": {"feeds": [
     {"name": "station_status", "url": "https://example.test/station_status.json"},
     {"name": "station_information", "url": "https://example.test/station_information.json"}]}}}

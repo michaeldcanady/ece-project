@@ -50,7 +50,8 @@ class WeatherJob(Job):
 
         obs_time = optional_int(current.get("time"))   # epoch seconds (timeformat=unixtime)
         common = dict(feed_last_updated=obs_time, feed_ttl=optional_int(current.get("interval")), n_records=1)
-        if self.cfg.skip_unchanged_feed and obs_time == self._last_feed_updated:
+        if (self.cfg.skip_unchanged_feed and obs_time is not None
+                and obs_time == self._last_feed_updated):
             return self._finish(poll_id, SOURCE_WEATHER, res.url, res, OUTCOME_SKIPPED, **common)
 
         payload = {
