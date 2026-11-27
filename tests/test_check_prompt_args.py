@@ -58,5 +58,28 @@ def test_a_missing_prompt_file_gives_a_finding(tmp_path: Path):
     assert "gone.md" in findings[0].message
 
 
+def test_a_placeholder_written_with_spaces_or_lowercase_is_still_found(tmp_path: Path):
+    findings = _check(tmp_path, {".sandcastle/x/prompt.md": "{{ISSUE_NUMBER}} {{RUBRIC}} {{ spaced }} {{lower}}\n"})
+    assert sorted(f.message.split("{{")[1].split("}}")[0] for f in findings) == ["lower", "spaced"]
+
+
+def test_sandcastle_built_in_placeholders_need_no_arg(tmp_path: Path):
+    prompt = "{{ISSUE_NUMBER}} {{RUBRIC}} {{SOURCE_BRANCH}} {{TARGET_BRANCH}}\n"
+    findings = _check(tmp_path, {".sandcastle/x/prompt.md": prompt})
+    assert list(findings) == []
+
+
+def test_a_call_without_prompt_args_is_not_paired_with_the_next_calls(tmp_path: Path):
+    script = SCRIPT + 'await run({ promptFile: here("other.md") });\n'
+    findings = _check(tmp_path, {".sandcastle/x/run.ts": script, ".sandcastle/x/other.md": "{{ISSUE_NUMBER}}\n"})
+    assert len(findings) == 1
+    assert "other.md" in findings[0].message and "ISSUE_NUMBER" in findings[0].message
+
+
+def test_a_call_passing_prompt_args_as_a_variable_is_skipped(tmp_path: Path):
+    script = 'await run({ promptFile: here("other.md"), promptArgs: args });\n' + SCRIPT
+    assert list(_check(tmp_path, {".sandcastle/x/run.ts": script, ".sandcastle/x/other.md": "{{WHATEVER}}\n"})) == []
+
+
 def test_the_real_repository_gives_no_finding():
     assert list(check_prompt_args.check(ROOT)) == []

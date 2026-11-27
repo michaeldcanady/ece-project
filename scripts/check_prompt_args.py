@@ -1,8 +1,9 @@
 """Fail when a `.sandcastle/` prompt's `{{PLACEHOLDER}}`s and the `promptArgs` that fill them disagree.
 
-A placeholder with no arg reaches the agent as a literal `{{NAME}}`; an arg with no placeholder is dead. Neither
-fails the typecheck or a test, only the nightly run. Each `promptFile: here("x.md")` in a `.sandcastle/` TypeScript
-file is paired with the `promptArgs: { ... }` that follows it, and with the file `x.md` next to it.
+Sandcastle fails the run when a placeholder has no matching value in `promptArgs` and only warns about an unused
+arg. Neither fails the typecheck or a test, only the nightly run. Each `promptFile: here("x.md")` in a
+`.sandcastle/` TypeScript file is paired with the `promptArgs: { ... }` that follows it in the same call, and with
+the file `x.md` next to it.
 
 Usage: python scripts/check_prompt_args.py   (run by `mise run lint`)
 """
@@ -14,7 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import FrozenSet, Iterator, List, Sequence, Tuple
 
-PLACEHOLDER = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
+# Same pattern as `PLACEHOLDER_PATTERN` in Sandcastle: spaces inside the braces and lowercase keys are allowed.
+PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# Sandcastle fills these itself and refuses them in `promptArgs`.
+BUILT_IN = frozenset({"SOURCE_BRANCH", "TARGET_BRANCH"})
+PROMPT_ARGS_KEY = re.compile(r"promptArgs\b")
 PROMPT_FILE = re.compile(r'promptFile:\s*here\("([^"]+)"\)')
 PROMPT_ARGS = re.compile(r"promptArgs:\s*\{")
 KEY = re.compile(r"\s*([A-Za-z_]\w*)\s*(?=[:,}]|$)")
@@ -87,11 +92,20 @@ def arg_names(text: str, args_match: re.Match[str]) -> FrozenSet[str]:
 
 
 def _pairs(text: str) -> Iterator[Tuple[str, FrozenSet[str]]]:
-    """Each `promptFile` in `text` with the keys of the `promptArgs` that follows it."""
-    for file_match in PROMPT_FILE.finditer(text):
-        args_match = PROMPT_ARGS.search(text, file_match.end())
+    """Each `promptFile` in `text` with the keys of the `promptArgs` in the same call.
+
+    The search stops at the next `promptFile`, so a call without `promptArgs` is not paired with a later call's.
+    A call whose `promptArgs` is not an object literal (a variable) is skipped: its keys are unknown.
+    """
+    matches = list(PROMPT_FILE.finditer(text))
+    for index, file_match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        window = text[file_match.end():end]
+        args_match = PROMPT_ARGS.search(text, file_match.end(), end)
         if args_match is not None:
             yield file_match.group(1), arg_names(text, args_match)
+        elif PROMPT_ARGS_KEY.search(window) is None:
+            yield file_match.group(1), frozenset()
 
 
 def check(root: Path) -> Sequence[Finding]:
@@ -107,7 +121,7 @@ def check(root: Path) -> Sequence[Finding]:
             if not prompt.is_file():
                 findings.append(Finding(rel, "promptFile %s does not exist" % prompt_name))
                 continue
-            used = frozenset(PLACEHOLDER.findall(prompt.read_text(encoding="utf-8")))
+            used = frozenset(PLACEHOLDER.findall(prompt.read_text(encoding="utf-8"))) - BUILT_IN
             for name in sorted(used - args):
                 findings.append(Finding(rel, "%s uses {{%s}} but promptArgs does not fill it" % (prompt_name, name)))
             for name in sorted(args - used):
