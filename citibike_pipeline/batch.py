@@ -16,11 +16,13 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from typing import List, Mapping, Optional, Tuple
 
+from citibike_contract import JsonObject
+
 from . import lake, serving
 from .batch_log import BatchLog, BatchLogEntry, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
-from .enrichment import Dimension, enrich_status
+from .enrichment import enrich_status
 from .enrichment_context import EnrichmentContext
 from .jsonfields import as_int, as_object
 from .kafka_io import (
@@ -37,6 +39,7 @@ from .schemas import (
     to_table,
 )
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
+from .station_information import StationInformation
 from .stats import Stats
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
@@ -56,7 +59,6 @@ def safe_id(run_id: str) -> str:
 # steps used to pass as dicts, so values already in flight and the files under ops/batch_plan/ stay readable.
 # from_json indexes every field (a missing one raises KeyError), except Published.at_risk: old in-flight XCom lacks it.
 
-JsonObject = Mapping[str, object]
 
 @dataclass(frozen=True)
 class Published:
@@ -115,11 +117,11 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
 # process
 # ---------------------------------------------------------------------------------------------
 
-def _load_dim(storage: Storage) -> Optional[Dimension]:
+def _load_dim(storage: Storage) -> Optional[Mapping[str, StationInformation]]:
     if not storage.exists(lake.DIM_STATION_CURRENT):
         return None
     t = read_parquet(storage, lake.DIM_STATION_CURRENT)
-    return {r["station_id"]: r for r in t.to_pylist()}
+    return {s.station_id: s for s in StationInformation.from_table(t)}
 
 
 def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,

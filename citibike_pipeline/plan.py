@@ -4,7 +4,8 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping
+
+from citibike_contract import JsonObject
 
 from .jsonfields import as_int
 from .kafka_io import (
@@ -29,9 +30,6 @@ def safe_id(run_id: str) -> str:
 # Each record has to_json/from_json so it can travel through Airflow XCom. The JSON keys are the ones the
 # steps used to pass as dicts, so values already in flight and the files under ops/batch_plan/ stay readable.
 # from_json indexes every field (a missing one raises KeyError), except Published.at_risk: old in-flight XCom lacks it.
-
-JsonObject = Mapping[str, object]
-
 
 @dataclass(frozen=True)
 class Plan:

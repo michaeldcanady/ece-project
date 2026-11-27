@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Tuple
 
+from citibike_contract import JsonObject
+
 from .batch_log import Counts
-from .plan import JsonObject
 from .timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)

@@ -6,6 +6,7 @@ from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.enrichment import PriorContext, enrich_status
 from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.observations import Delivered, StationStatus
+from citibike_pipeline.station_information import StationInformation
 from citibike_pipeline.weather_reading import WeatherReading
 
 CFG = PipelineConfig()
@@ -72,7 +73,7 @@ def test_an_observation_older_than_the_stale_threshold_is_stale():
 
 
 def test_a_station_missing_from_the_dimension_is_unknown_and_a_known_one_is_named():
-    dimension = {"a": {"name": "Alpha", "lat": 40.7, "lon": -74.0, "capacity": 20}}
+    dimension = {"a": StationInformation("a", "Alpha", None, 40.7, -74.0, 20, None)}
     rows, counts = enrich([delivered("a"), delivered("zz", poll_id="p2", offset=1)], dimension=dimension)
     by_station = {r.station_id: r for r in rows}
     assert by_station["a"].station_name == "Alpha" and not by_station["a"].is_unknown_station

@@ -9,16 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Generic, List, Mapping, Optional, Tuple, TypeVar, Union
+from typing import Generic, List, Optional, Tuple, TypeVar, Union
 
-from citibike_contract import Envelope
+from citibike_contract import Envelope, JsonObject
 
 from .kafka_io import Record
 from .timeutil import from_epoch
 
 T = TypeVar("T")
 
-JsonObject = Mapping[str, object]
 BOOL_LIKE = (0, 1, True, False)
 
 

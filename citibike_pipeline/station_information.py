@@ -7,9 +7,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Union
 
+import pyarrow as pa
+
 from citibike_contract import JsonObject
 
 from .observations import Rejected, is_int
+
+_COLUMNS = ["station_id", "name", "short_name", "lat", "lon", "capacity", "region_id"]
 
 
 def _number(value: object) -> Optional[float]:
@@ -30,6 +34,12 @@ class StationInformation:
     lon: float
     capacity: Optional[int]
     region_id: Optional[str]
+
+    @staticmethod
+    def from_table(table: pa.Table) -> List[StationInformation]:
+        """The stations of a dimension table (the columns `to_table` wrote for DIM_STATION)."""
+        cols = {c: table[c].to_pylist() for c in _COLUMNS}
+        return [StationInformation(**{c: cols[c][i] for c in _COLUMNS}) for i in range(table.num_rows)]
 
     @classmethod
     def parse(cls, payload: JsonObject) -> Union[StationInformation, Rejected]:

@@ -7,7 +7,7 @@ from __future__ import annotations
 import bisect
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import FrozenSet, List, Mapping, MutableMapping, Optional, Sequence, Set, Tuple
 
 import pyarrow as pa
 
@@ -15,11 +15,9 @@ from .batch_log import Counts
 from .config import PipelineConfig
 from .observations import Delivered, StationStatus
 from .rows import CuratedStatusRow
+from .station_information import StationInformation
 from .timeutil import epoch, from_epoch_ms
 from .weather_reading import WeatherReading
-
-# station id -> the station dimension's fields (candidate: a typed Station dimension module)
-Dimension = Mapping[str, Mapping[str, object]]
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,7 @@ class PriorContext:
         if table is None or not table.num_rows:
             return cls()
         seen: Set[Tuple[str, int]] = set()
-        newest = {}
+        newest: MutableMapping[str, int] = {}
         for station_id, last_reported in zip(table["station_id"].to_pylist(), table["last_reported"].to_pylist()):
             if last_reported is None:
                 continue
@@ -47,9 +45,9 @@ class PriorContext:
 
 
 
-def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorContext, dimension: Optional[Dimension],
-                  weather: Sequence[WeatherReading], batch_id: str, processed_at: datetime,
-                  cfg: PipelineConfig) -> Tuple[List[CuratedStatusRow], Counts]:
+def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorContext,
+                  dimension: Optional[Mapping[str, StationInformation]], weather: Sequence[WeatherReading],
+                  batch_id: str, processed_at: datetime, cfg: PipelineConfig) -> Tuple[List[CuratedStatusRow], Counts]:
     """Dedup, flag, and enrich station observations in deterministic (time, partition, offset) order.
 
     `dimension` is None when no station dimension has been built yet (no station is then unknown). The Counts
@@ -102,8 +100,8 @@ def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorCont
             num_docks_disabled=st.num_docks_disabled, is_installed=st.is_installed, is_renting=st.is_renting,
             is_returning=st.is_returning, age_s=age_s, is_stale=is_stale, is_repeat=is_repeat,
             is_out_of_order=is_ooo, is_unknown_station=unknown,
-            station_name=info.get("name") if info else None, lat=info.get("lat") if info else None,
-            lon=info.get("lon") if info else None, capacity=info.get("capacity") if info else None,
+            station_name=info.name if info else None, lat=info.lat if info else None,
+            lon=info.lon if info else None, capacity=info.capacity if info else None,
             temperature_c=w.temperature_c if w else None, precipitation_mm=w.precipitation_mm if w else None,
             weather_code=w.weather_code if w else None, wind_speed_kmh=w.wind_speed_kmh if w else None,
             poll_id=env.poll_id, replay=env.replay, replayed_at=env.replayed_at, kafka_topic=rec.topic,

@@ -24,7 +24,7 @@ BASELINE: Mapping[str, int] = {
     "citibike_pipeline/stats.py": 1,
     "citibike_pipeline/batch_log.py": 10,
     "citibike_pipeline/counts.py": 1,
-    "citibike_pipeline/enrichment.py": 5,
+    "citibike_pipeline/enrichment.py": 0,
     "citibike_pipeline/kafka_io.py": 0,
     "citibike_pipeline/lake.py": 1,
     "citibike_pipeline/observations.py": 9,
