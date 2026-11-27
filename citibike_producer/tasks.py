@@ -18,6 +18,7 @@ from .jobs import GbfsStationJob, Job, WeatherJob
 from .replay import replay
 from .sink import KafkaSink
 from .sources import FeedRegistry, HttpClient
+from .task import PollResult
 
 JOBS = ("station_status", "station_information", "weather")
 
@@ -40,10 +41,10 @@ def _job_config(cfg: Config, job: str) -> Config:
     os.makedirs(cfg.capture_dir, exist_ok=True)
     return dataclasses.replace(cfg, tee_path=os.path.join(cfg.capture_dir, "%s.jsonl.gz" % job))
 
-
+# TODO: stronger typing and dataclasses for the state, so that the producer can be more easily tested in isolation.
 def poll_once(job: str, state: Optional[Dict[str, Any]] = None, cfg: Optional[Config] = None,
-              producer: Any = None, client: Optional[HttpClient] = None) -> Dict[str, Any]:
-    """Poll one source once and publish to Kafka. Returns {"ok", "outcome", "error", "state"}.
+              producer: Any = None, client: Optional[HttpClient] = None) -> PollResult:
+    """Poll one source once and publish to Kafka. Returns a PollResult instance.
 
     A failed poll is not an exception: it is already recorded in pipeline.poll_log. The caller
     decides whether to fail the task (after saving the returned state).
@@ -65,7 +66,7 @@ def poll_once(job: str, state: Optional[Dict[str, Any]] = None, cfg: Optional[Co
     new_state: Dict[str, Any] = {"job": j.state()}
     if job != "weather":
         new_state["discovery"] = registry.state()
-    return {"ok": ok, "outcome": j.last_outcome, "error": j.last_error, "state": new_state}
+    return PollResult(ok=ok, outcome=j.last_outcome, error=j.last_error, state=new_state)
 
 
 def replay_capture(path: str, speed: float = 60.0, max_gap_s: float = 5.0, cfg: Optional[Config] = None,

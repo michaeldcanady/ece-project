@@ -69,6 +69,7 @@ LAYER_MAP = {
     "citibike_producer.replay": "producer:jobs",
     "citibike_producer.broker": "producer:task entry points",
     "citibike_producer.synthetic": "producer:task entry points",
+    "citibike_producer.task": "producer:task entry points",
     "citibike_producer.tasks": "producer:task entry points",
     # DAGs
     "dags._common": "dags:orchestration and entry",

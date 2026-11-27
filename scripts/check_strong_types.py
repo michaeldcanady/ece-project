@@ -33,8 +33,9 @@ BASELINE = {
     "citibike_producer/sink.py": 5,
     "citibike_producer/sources.py": 12,
     "citibike_producer/synthetic.py": 7,
-    "citibike_producer/tasks.py": 8,
-    "dags/_common.py": 3,
+    "citibike_producer/task.py": 2,
+    "citibike_producer/tasks.py": 6,
+    "dags/_common.py": 2,
 }
 
 

@@ -1,6 +1,8 @@
 """Settings shared by every Citi Bike DAG. Standard library and pendulum only, so importing this
 file can never fail because of a pipeline dependency."""
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Optional
 
 import pendulum
 
@@ -20,8 +22,13 @@ def default_args(retries: int, retry_delay: timedelta, execution_timeout: timede
 
 STATE_KEY = "producer_state"
 
+@dataclass(frozen=True)
+class Outcome:
+    outcome: Optional[str] = None
 
-def run_poll(job: str, context: dict) -> dict:
+# TODO: stronger typing and dataclasses for the context, so that the producer can be more easily tested in isolation.
+# TODO: stub airflow context for testing.
+def run_poll(job: str, context: dict) -> Outcome:
     """Poll one source once, carrying the producer's state between runs in XCom.
 
     The state is saved before a failed poll fails the task, so the failure count and the
@@ -32,7 +39,7 @@ def run_poll(job: str, context: dict) -> dict:
     ti = context["ti"]
     prior = ti.xcom_pull(task_ids=ti.task_id, key=STATE_KEY, include_prior_dates=True)
     result = poll_once(job, prior)
-    ti.xcom_push(key=STATE_KEY, value=result["state"])
-    if not result["ok"]:
-        raise RuntimeError("%s poll failed: %s (%s)" % (job, result["outcome"], result["error"]))
-    return {"outcome": result["outcome"]}
+    ti.xcom_push(key=STATE_KEY, value=result.state)
+    if not result.ok:
+        raise RuntimeError("%s poll failed: %s (%s)" % (job, result.outcome, result.error))
+    return Outcome(outcome=result.outcome)

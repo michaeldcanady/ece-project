@@ -2,6 +2,7 @@ import gzip
 import json
 import logging
 import threading
+from typing import Protocol
 
 from citibike_contract import Envelope, encode, parse_iso
 from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
@@ -11,6 +12,11 @@ from citibike_producer.sink import KafkaSink
 from citibike_producer.sources import FetchResult, parse_discovery
 from citibike_producer.tasks import poll_once, replay_capture
 
+
+class _Producer(Protocol):
+    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=None): ...
+    def poll(self, t=0) -> int: ...
+    def flush(self, t=0) -> int: ...
 
 class FakeProducer:
     """Mimics confluent_kafka.Producer: delivery callbacks fire on flush()."""
@@ -70,7 +76,7 @@ def ok_result(body):
                        "2026-10-20T14:00:00.500+00:00", 200, 120, body)
 
 
-def make_job(client, producer, cfg=None):
+def make_job(client, producer: _Producer, cfg=None):
     cfg = cfg or Config()
     sink = KafkaSink(cfg, producer=producer)
     job = GbfsStationJob(cfg, sink, client, FakeRegistry(), "station_status", "station_status", TOPIC_STATUS)
@@ -231,13 +237,13 @@ def test_poll_once_carries_state_between_runs():
     prod = FakeProducer()
     first = poll_once("station_status", None, Config(), producer=prod,
                       client=FakeClient([ok_result(DISCOVERY_BODY), ok_result(STATUS_BODY)]))
-    assert first["ok"] and first["outcome"] == "ok"
-    assert first["state"]["job"]["last_feed_updated"] == 1760000100
-    assert first["state"]["discovery"]["urls"]["station_status"].endswith("station_status.json")
+    assert first.ok and first.outcome == "ok"
+    assert first.state["job"]["last_feed_updated"] == 1760000100
+    assert first.state["discovery"]["urls"]["station_status"].endswith("station_status.json")
     # second run: no discovery fetch (the client has only the status response), unchanged feed skipped
-    second = poll_once("station_status", first["state"], Config(), producer=prod,
+    second = poll_once("station_status", first.state, Config(), producer=prod,
                        client=FakeClient([ok_result(STATUS_BODY)]))
-    assert second["ok"] and second["outcome"] == "skipped_unchanged"
+    assert second.ok and second.outcome == "skipped_unchanged"
     assert len(by_topic(prod, TOPIC_STATUS)) == 3
 
 
@@ -246,8 +252,8 @@ def test_poll_once_reports_failure_and_counts_it_in_state():
     state = {"job": {"consecutive_failures": 2}}
     prod = FakeProducer()
     res = poll_once("weather", state, Config(), producer=prod, client=FakeClient([bad]))
-    assert not res["ok"] and res["outcome"] == "timeout" and res["error"] == "read timeout"
-    assert res["state"]["job"]["consecutive_failures"] == 3
+    assert not res.ok and res.outcome == "timeout" and res.error == "read timeout"
+    assert res.state["job"]["consecutive_failures"] == 3
     assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["consecutive_failures"] == 3
 
 
