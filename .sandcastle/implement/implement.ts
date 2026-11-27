@@ -4,6 +4,7 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import {
   claudeAgent,
+  claudeReviewAgent,
   exec,
   fail,
   outputDir,
@@ -82,6 +83,7 @@ try {
   const notesFile = path.join(outputDir(), "review_notes.md");
   await sandcastle.run({
     ...common,
+    agent: claudeReviewAgent(),
     name: `review-#${ISSUE_NUMBER}`,
     maxIterations: 1,
     promptFile: here("review-prompt.md"),

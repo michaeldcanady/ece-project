@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import { claudeAgent, exec, fail, required, writeJson } from "../shared/common";
+import { claudeReviewAgent, exec, fail, required, writeJson } from "../shared/common";
 import { runWithExtraction } from "../shared/run-with-extraction";
 import { alreadyReviewed } from "./review-actions";
 import { reviewContextSchema, type ReviewContext } from "./review-context";
@@ -37,7 +37,7 @@ try {
     const before = head();
     const review = await runWithExtraction({
       name: `pr-review-${context.pr}`,
-      agent: claudeAgent(),
+      agent: claudeReviewAgent(),
       sandbox: noSandbox(),
       logging: { type: "stdout" },
       maxIterations: 1,
