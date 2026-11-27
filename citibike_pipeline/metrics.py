@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Sequence, TypeVar
 
 from .config import PipelineConfig
 
+_N = TypeVar("_N", int, float)
 
-def pct(sorted_vals: List[float], q: float) -> Optional[float]:
+
+def pct(sorted_vals: Sequence[_N], q: float) -> Optional[_N]:
     """Nearest-rank percentile of an already sorted list; None when empty."""
     if not sorted_vals:
         return None

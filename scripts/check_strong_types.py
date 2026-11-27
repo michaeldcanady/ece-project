@@ -18,7 +18,6 @@ WEAK = frozenset({"Any", "Dict", "dict"})
 
 # path -> weak annotations allowed (the count when the rule was added). Only ever lower these.
 BASELINE = {
-    "citibike_pipeline/quality.py": 16,
     "citibike_producer/broker.py": 4,
     "citibike_producer/create_topics.py": 4,
     "citibike_producer/jobs.py": 4,
