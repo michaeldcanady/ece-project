@@ -125,8 +125,7 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in decoded.weather]
 
     status_rows, counts = enrich_status(decoded.status, context.prior, StationInformationTable().current(storage),
-                                        context.weather,
-                                        batch_id, processed_at, cfg)
+                                        context.weather, batch_id, processed_at, cfg)
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
     for et, rows in decoded.raw_rows_by_event_type().items():
