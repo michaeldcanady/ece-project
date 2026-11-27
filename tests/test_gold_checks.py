@@ -1,5 +1,5 @@
 """The gold window rules: a row the pipeline's own metrics produce is consistent; each broken rule is named."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.metrics import Obs, window_metrics
@@ -11,7 +11,9 @@ AS_OF = 10_000.0
 
 def row(bikes_first, bikes_last, docks_first, docks_last, minutes=14):
     obs = [Obs(AS_OF - minutes * 60, bikes_first, docks_first), Obs(AS_OF, bikes_last, docks_last)]
-    r = window_metrics(obs, AS_OF, CFG)
+    wm = window_metrics(obs, AS_OF, CFG)
+    assert wm is not None
+    r = asdict(wm)
     r.pop("window_start")
     return r
 

@@ -13,7 +13,7 @@ from typing import Callable, List, Optional
 import pyarrow as pa
 
 from .config import PipelineConfig
-from .metrics import Obs, station_state, window_metrics
+from .metrics import Obs, StationStatus, station_state, window_metrics
 from .timeutil import epoch, floor_5min, from_epoch
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
@@ -142,10 +142,9 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
         return None
     ordered = sorted(rows, key=lambda r: (r.fetched_at, r.kafka_partition, r.kafka_offset))
     obs = defaultdict(list)  # station_id -> List[Obs]
-    latest = {}  # station_id -> its newest StatusRow
     for r in ordered:
         obs[r.station_id].append(Obs(epoch(r.fetched_at), r.num_bikes_available, r.num_docks_available))
-        latest[r.station_id] = r
+    latest = {r.station_id: r for r in ordered}  # station_id -> its newest StatusRow
 
     as_of_s = epoch(as_of)
     stale_s = cfg.stale_minutes * 60
@@ -156,23 +155,27 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
         age = int(as_of_s) - r.last_reported
         state = station_state(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
                               r.num_bikes_available, r.num_docks_available)
-        at_risk = None
+        risk: Optional[str] = None
         if wm:
-            window_start = from_epoch(wm.pop("window_start"))
-            windows.append(StationWindow(station_id=sid, as_of=as_of, window_start=window_start,
-                                         batch_id=batch_id, **wm))
-            if state == "OK":
-                at_risk = "EMPTY" if wm["at_risk_empty"] else ("FULL" if wm["at_risk_full"] else None)
+            windows.append(StationWindow(
+                station_id=sid, as_of=as_of, window_start=from_epoch(wm.window_start), n_obs=wm.n_obs,
+                coverage_min=wm.coverage_min, bikes_first=wm.bikes_first, bikes_last=wm.bikes_last,
+                docks_first=wm.docks_first, docks_last=wm.docks_last, net_change=wm.net_change,
+                rate_per_min=wm.rate_per_min, docks_rate_per_min=wm.docks_rate_per_min,
+                minutes_to_empty=wm.minutes_to_empty, minutes_to_full=wm.minutes_to_full,
+                at_risk_empty=wm.at_risk_empty, at_risk_full=wm.at_risk_full, batch_id=batch_id))
+            if state == StationStatus.OK:
+                risk = "EMPTY" if wm.at_risk_empty else ("FULL" if wm.at_risk_full else None)
         states.append(StationState(
             station_id=sid, station_name=r.station_name, lat=r.lat, lon=r.lon, capacity=r.capacity,
-            state=state, num_bikes_available=r.num_bikes_available,
+            state=state.value, num_bikes_available=r.num_bikes_available,
             num_ebikes_available=r.num_ebikes_available, num_docks_available=r.num_docks_available,
             last_reported=r.last_reported, age_s=age, observed_at=r.fetched_at,
-            net_change_15m=wm["net_change"] if wm else None,
-            rate_per_min=wm["rate_per_min"] if wm else None,
-            minutes_to_empty=wm["minutes_to_empty"] if wm else None,
-            minutes_to_full=wm["minutes_to_full"] if wm else None,
-            at_risk=at_risk, temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
+            net_change_15m=wm.net_change if wm else None,
+            rate_per_min=wm.rate_per_min if wm else None,
+            minutes_to_empty=wm.minutes_to_empty if wm else None,
+            minutes_to_full=wm.minutes_to_full if wm else None,
+            at_risk=risk, temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
             as_of=as_of, batch_id=batch_id))
 
     total = len(states)

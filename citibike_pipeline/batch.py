@@ -39,6 +39,7 @@ from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
 from .stats import Stats
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
+from .weather_reading import WEATHER_READING_COLS, WeatherReading
 
 log = logging.getLogger(__name__)
 

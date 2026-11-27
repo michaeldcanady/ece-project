@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 from citibike_contract import TOPIC_STATUS, Envelope, encode
+from citibike_pipeline import metrics
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
 from citibike_pipeline.kafka_io import Record
@@ -101,42 +102,42 @@ def test_depleting_station_is_at_risk_of_empty():
     # 31 observations 30 s apart; the window is (as_of - 15 min, as_of], so the oldest point is excluded
     # and coverage is 14.5 minutes.
     wm = window_metrics(series([10] * 15 + [9] * 8 + [7] * 8), NOW, CFG)          # 10 -> 7
-    assert wm["net_change"] == -3 and wm["coverage_min"] == pytest.approx(14.5)
-    assert wm["rate_per_min"] == pytest.approx(-3 / 14.5)
-    assert wm["minutes_to_empty"] == pytest.approx(7 / (3 / 14.5)) and not wm["at_risk_empty"]   # ~33.8 > 30
+    assert wm.net_change == -3 and wm.coverage_min == pytest.approx(14.5)
+    assert wm.rate_per_min == pytest.approx(-3 / 14.5)
+    assert wm.minutes_to_empty == pytest.approx(7 / (3 / 14.5)) and not wm.at_risk_empty   # ~33.8 > 30
     wm = window_metrics(series([10] * 10 + [8] * 10 + [4] * 11), NOW, CFG)        # 10 -> 4
-    assert wm["minutes_to_empty"] == pytest.approx(4 / (6 / 14.5)) and wm["at_risk_empty"]        # ~9.7 min
+    assert wm.minutes_to_empty == pytest.approx(4 / (6 / 14.5)) and wm.at_risk_empty        # ~9.7 min
 
 
 def test_filling_station_is_at_risk_of_full():
     wm = window_metrics(series([20] * 10 + [24] * 10 + [27] * 11), NOW, CFG)      # docks 10 -> 3
-    assert wm["at_risk_full"] and wm["minutes_to_full"] == pytest.approx(3 / (7 / 14.5))
+    assert wm.at_risk_full and wm.minutes_to_full == pytest.approx(3 / (7 / 14.5))
 
 
 def test_noise_floor_and_flat_series_do_not_alert():
-    assert not window_metrics(series([5] * 5 + [4] * 26), NOW, CFG)["at_risk_empty"]   # only -1 bike
+    assert not window_metrics(series([5] * 5 + [4] * 26), NOW, CFG).at_risk_empty   # only -1 bike
     wm = window_metrics(series([8] * 31), NOW, CFG)
-    assert wm["minutes_to_empty"] is None and not wm["at_risk_empty"] and not wm["at_risk_full"]
+    assert wm.minutes_to_empty is None and not wm.at_risk_empty and not wm.at_risk_full
 
 
 def test_short_coverage_gives_no_rate_but_empty_still_reports_zero():
     wm = window_metrics(series([3, 2, 1], step=30.0), NOW, CFG)        # 1 minute of history
-    assert wm["rate_per_min"] is None and not wm["at_risk_empty"]
-    assert window_metrics(series([0, 0, 0], step=30.0), NOW, CFG)["minutes_to_empty"] == 0.0
+    assert wm.rate_per_min is None and not wm.at_risk_empty
+    assert window_metrics(series([0, 0, 0], step=30.0), NOW, CFG).minutes_to_empty == 0.0
     assert window_metrics([], NOW, CFG) is None
 
 
 def test_observations_outside_window_are_ignored():
     obs = series([5] * 3) + [Obs(NOW - 3600, 30, 0)]
-    assert window_metrics(obs, NOW, CFG)["n_obs"] == 3
+    assert window_metrics(obs, NOW, CFG).n_obs == 3
 
 
 def test_station_state_precedence():
-    assert station_state(True, True, True, False, 0, 5) == "EMPTY"
-    assert station_state(True, True, True, False, 5, 0) == "FULL"
-    assert station_state(True, True, True, True, 0, 5) == "STALE"
-    assert station_state(True, False, True, True, 0, 5) == "OFFLINE"
-    assert station_state(True, True, True, False, 5, 5) == "OK"
+    assert station_state(True, True, True, False, 0, 5) == metrics.StationStatus.EMPTY
+    assert station_state(True, True, True, False, 5, 0) == metrics.StationStatus.FULL
+    assert station_state(True, True, True, True, 0, 5) == metrics.StationStatus.STALE
+    assert station_state(True, False, True, True, 0, 5) == metrics.StationStatus.OFFLINE
+    assert station_state(True, True, True, False, 5, 5) == metrics.StationStatus.OK
 
 
 def test_local_storage_roundtrip_and_safety(tmp_path):

@@ -3,9 +3,10 @@ from datetime import datetime, timedelta, timezone
 
 from citibike_contract import Envelope
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.enrichment import PriorContext, WeatherReading, enrich_status
+from citibike_pipeline.enrichment import PriorContext, enrich_status
 from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.observations import Delivered, StationStatus
+from citibike_pipeline.weather_reading import WeatherReading
 
 CFG = PipelineConfig()
 T0 = datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc)

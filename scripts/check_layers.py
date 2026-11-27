@@ -41,6 +41,7 @@ LAYER_MAP = {
     "citibike_pipeline.rows": "pipeline:core",
     "citibike_pipeline.snapshot": "pipeline:core",
     "citibike_pipeline.timeutil": "pipeline:core",
+    "citibike_pipeline.weather_reading": "pipeline:core",
     "citibike_pipeline.validation": "pipeline:core",
     # pipeline: infrastructure (Kafka, storage, the lake)
     "citibike_pipeline.batch_log": "pipeline:infrastructure",
