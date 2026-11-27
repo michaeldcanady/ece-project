@@ -81,5 +81,11 @@ def test_a_call_passing_prompt_args_as_a_variable_is_skipped(tmp_path: Path):
     assert list(_check(tmp_path, {".sandcastle/x/run.ts": script, ".sandcastle/x/other.md": "{{WHATEVER}}\n"})) == []
 
 
+def test_comments_inside_prompt_args_are_ignored(tmp_path: Path):
+    commented = "    // don't pass the raw body\n    ISSUE_NUMBER, /* it's a number */"
+    script = SCRIPT.replace("    ISSUE_NUMBER,", commented)
+    assert list(_check(tmp_path, {".sandcastle/x/run.ts": script})) == []
+
+
 def test_the_real_repository_gives_no_finding():
     assert list(check_prompt_args.check(ROOT)) == []

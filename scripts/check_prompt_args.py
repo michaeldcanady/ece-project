@@ -36,6 +36,36 @@ class Finding:
     message: str
 
 
+def strip_comments(text: str) -> str:
+    """`text` without `//` and `/* */` comments; quoted strings are left alone, so a URL in one survives."""
+    out: List[str] = []
+    quote, i = "", 0
+    while i < len(text):
+        ch, pair = text[i], text[i:i + 2]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                i += 1
+                out.append(text[i])
+            elif ch == quote:
+                quote = ""
+        elif ch in QUOTES:
+            quote = ch
+            out.append(ch)
+        elif pair == "//":
+            while i < len(text) and text[i] != "\n":
+                i += 1
+            continue
+        elif pair == "/*":
+            end = text.find("*/", i + 2)
+            i = len(text) if end < 0 else end + 2
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _object_body(text: str, start: int) -> str:
     """The text between the `{` just before `start` and its matching `}`; quoted strings are skipped."""
     depth, quote, i = 1, "", start
@@ -97,6 +127,7 @@ def _pairs(text: str) -> Iterator[Tuple[str, FrozenSet[str]]]:
     The search stops at the next `promptFile`, so a call without `promptArgs` is not paired with a later call's.
     A call whose `promptArgs` is not an object literal (a variable) is skipped: its keys are unknown.
     """
+    text = strip_comments(text)
     matches = list(PROMPT_FILE.finditer(text))
     for index, file_match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
