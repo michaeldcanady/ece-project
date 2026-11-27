@@ -8,7 +8,7 @@ name: spec
 #
 # A failed or cancelled run gets one retry: the `blocked` job adds `agent:recovered` and re-adds `agent:spec` with
 # AGENT_PAT (a label added with GITHUB_TOKEN starts no workflow). A second failure removes `agent:spec` and leaves
-# the issue unchanged. A success removes `agent:recovered`.
+# the issue unchanged and labeled `agent:blocked`. A success removes `agent:recovered` and `agent:blocked`.
 #
 # Same split as improve.yml: the agent job is read-only and holds only the OAuth token; separate jobs with
 # `issues: write` (and the PAT) apply the result.
@@ -33,7 +33,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/issue"
-          gh issue view "$ISSUE_NUMBER" --json title,body,comments,labels,authorAssociation > "$RUNNER_TEMP/issue/issue.json"
+          # `gh issue view` has no author-association field, so it comes from the REST API (as `author_association`).
+          association=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq .author_association)
+          gh issue view "$ISSUE_NUMBER" --json title,body,comments,labels \
+            | jq --arg a "$association" '. + {authorAssociation: $a}' > "$RUNNER_TEMP/issue/issue.json"
       - uses: actions/upload-artifact@v4
         with:
           name: issue
