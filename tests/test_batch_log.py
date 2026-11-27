@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from citibike_pipeline.batch import Plan, Published, Stats
 from citibike_pipeline.batch_log import BatchLog, BatchLogEntry, Counts, Latencies
-from citibike_pipeline.storage import LocalStorage
+from citibike_pipeline.local_storage import LocalStorage
 
 T0 = datetime(2026, 3, 10, 12, 0, tzinfo=timezone.utc)
 

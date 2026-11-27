@@ -15,7 +15,7 @@ from airflow.decorators import dag, task
 def citibike_ingest_weather():
     @task
     def poll(**context):
-        return run_poll("weather", context)
+        return run_poll("weather", context["ti"])
 
     poll()
 

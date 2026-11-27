@@ -12,7 +12,8 @@ from typing import List, Mapping, Tuple
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from citibike_pipeline.storage import Storage, read_parquet
+from citibike_pipeline.storage import Storage
+from citibike_pipeline.storage_ops import read_parquet
 
 from .check_result import CheckResult
 from .cleaning_checks import all_entries

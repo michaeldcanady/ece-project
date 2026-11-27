@@ -36,12 +36,16 @@ files for the same reason is a repeat even under a new title: leave it out.
 Pick at most **3** candidates, strongest first, and **none** if nothing deserves `explore` or better. A quiet night
 is a fine result; padding the list is not. Rate each:
 
-- `strong`: real friction, a real seam, clear leverage, low risk to the tests that exist
-- `explore`: a plausible gain that needs a judgment call the implementer must make
-- `speculative`: drop it; do not output speculative candidates
+{{STRENGTH_RUBRIC}}
+
+Drop `speculative` candidates: do not output them.
 
 Each candidate's `body` is the spec, in this format:
 
 {{SPEC_FORMAT}}
 
 Finish with the `<output>` tag only when the specs are complete.
+
+# WRITING STYLE
+
+{{WRITING_STYLE}}

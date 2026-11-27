@@ -9,7 +9,7 @@ from datetime import timezone
 from typing import List, Optional
 
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.storage import LocalStorage
+from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.timeutil import utcnow
 
 from . import cleaning_checks, gold_checks, live_history_checks, live_lake_checks, serving_checks

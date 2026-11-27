@@ -12,9 +12,11 @@ from typing import List, Optional
 import pyarrow as pa
 
 from . import lake
+from .hour_partitions import part_key
 from .schemas import CURRENT_STATE, SYSTEM_AVAILABILITY, WINDOW_15M, to_table
 from .snapshot import Snapshot, SystemAvailability
-from .storage import Storage, put_parquet, read_parquet
+from .storage import Storage
+from .storage_ops import put_parquet, read_parquet
 
 CURRENT = "gold/serving/current_station_state.parquet"
 AT_RISK = "gold/serving/at_risk.parquet"
@@ -42,10 +44,10 @@ def _table(rows: List[object], schema: pa.Schema) -> pa.Table:
 
 def publish(storage: Storage, snap: Snapshot) -> None:
     """Write the snapshot's history, then the serving files, last of all."""
-    put_parquet(storage, lake.part_key(lake.GOLD_WINDOW, snap.as_of, "%s.parquet" % snap.batch_id),
+    put_parquet(storage, part_key(lake.GOLD_WINDOW, snap.as_of, "%s.parquet" % snap.batch_id),
                 _table(snap.windows, WINDOW_15M))
     bucket = snap.availability.bucket_start
-    put_parquet(storage, lake.part_key(lake.GOLD_AVAILABILITY, snap.as_of, "%s.parquet" % bucket.strftime("%H%M")),
+    put_parquet(storage, part_key(lake.GOLD_AVAILABILITY, snap.as_of, "%s.parquet" % bucket.strftime("%H%M")),
                 _table([snap.availability], SYSTEM_AVAILABILITY))
     put_parquet(storage, AT_RISK, _table(snap.at_risk, CURRENT_STATE))
     put_parquet(storage, SUMMARY, _table([snap.availability], SYSTEM_AVAILABILITY))

@@ -5,8 +5,8 @@ Read during review. Each rule says what good looks like; `mise run lint` already
 ## Strong types
 
 Every value gets its exact type, or a custom class written for it. `scripts/check_strong_types.py` rejects
-`Any`, `typing.Dict` and the builtin `dict` in annotations; files written before the rule may only lower their
-count in its `BASELINE`. Review for what the check cannot see:
+`Any`, `typing.Dict` and the builtin `dict` in annotations, in every file. `scripts/check_mypy.py` runs mypy with a per-file error baseline that only shrinks, so
+annotations are checked against the code that uses them. Review for what the checks cannot see:
 
 - **Records are classes.** A value with named fields (a parsed JSON object, a step record, a function's
   options) is a frozen `@dataclass`. A `TypedDict` fits only where the value must stay a real `dict`, such as
@@ -16,8 +16,8 @@ count in its `BASELINE`. Review for what the check cannot see:
   where they enter, the way `citibike_contract.decode` returns an `Envelope`. Code past the boundary reads
   attributes.
 - **Closed sets are types.** Event types, outcomes and reason codes are a `Literal[...]` or an `Enum`.
-- **Touched code moves forward.** A change to a function signature in a `BASELINE` file types that signature,
-  and lowers the file's count.
+- **Lookups are Mappings.** A map with open keys (topic to partition, station id to its latest value) is a
+  `Mapping[K, V]` with exact types, never a `dict`; a map with a fixed set of keys is a record.
 
 ## Idempotent
 

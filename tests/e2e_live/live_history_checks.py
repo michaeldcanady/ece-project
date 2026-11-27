@@ -10,7 +10,7 @@ from citibike_contract import InvalidPollLog, PollLog
 from citibike_pipeline import lake
 from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.metrics import pct
+from citibike_pipeline.percentile import pct
 from citibike_pipeline.storage import Storage
 from citibike_pipeline.timeutil import utcnow
 

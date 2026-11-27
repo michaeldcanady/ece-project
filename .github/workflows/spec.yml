@@ -2,10 +2,16 @@ name: spec
 
 # Adding the `agent:spec` label to an issue expands its short note into a full spec (Problem, Files, Proposal,
 # Benefits, Tests, Acceptance criteria, Out of scope) and replaces the issue body, keeping the note under
-# "Original note". Nothing is implemented. Add `agent:implement` afterwards.
+# "Original note", rates it, and labels it `agent:candidate` plus one `strength:*` (replacing a stale one).
+# Nothing is implemented, with one exception: a strong-rated issue labeled `request` also gets `agent:implement`
+# (added with AGENT_PAT so it starts implement.yml). Any other issue waits for a human to add it.
 #
-# Same split as improve.yml: the agent job is read-only and holds only the OAuth token; a separate job with
-# `issues: write` applies the result.
+# A failed or cancelled run gets one retry: the `blocked` job adds `agent:recovered` and re-adds `agent:spec` with
+# AGENT_PAT (a label added with GITHUB_TOKEN starts no workflow). A second failure removes `agent:spec` and leaves
+# the issue unchanged and labeled `agent:blocked`. A success removes `agent:recovered` and `agent:blocked`.
+#
+# Same split as improve.yml: the agent job is read-only and holds only the OAuth token; separate jobs with
+# `issues: write` (and the PAT) apply the result.
 
 on:
   issues:
@@ -27,7 +33,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/issue"
-          gh issue view "$ISSUE_NUMBER" --json title,body,comments > "$RUNNER_TEMP/issue/issue.json"
+          # `gh issue view` has no author-association field, so it comes from the REST API (as `author_association`).
+          association=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq .author_association)
+          gh issue view "$ISSUE_NUMBER" --json title,body,comments,labels \
+            | jq --arg a "$association" '. + {authorAssociation: $a}' > "$RUNNER_TEMP/issue/issue.json"
       - uses: actions/upload-artifact@v4
         with:
           name: issue
@@ -101,20 +110,30 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_FILE: ${{ runner.temp }}/issue/issue.json
           SPEC_DIR: ${{ runner.temp }}/spec
+          AGENT_PAT: ${{ secrets.AGENT_PAT }} # labels a strong request agent:implement; GITHUB_TOKEN would not start implement.yml
         run: npx --prefix .sandcastle tsx .sandcastle/spec/apply.ts
 
   blocked:
     needs: [fetch, scan, apply]
-    if: always() && needs.fetch.result != 'skipped' && (needs.fetch.result == 'failure' || needs.scan.result == 'failure' || needs.apply.result == 'failure')
+    # Cancelled and timed-out jobs count as failures, same as errors.
+    if: always() && needs.fetch.result != 'skipped' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent:spec || true
-          gh issue comment "$ISSUE_NUMBER" --body "The spec run failed, so the issue is unchanged. See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID"
+          AGENT_PAT: ${{ secrets.AGENT_PAT }} # re-adds agent:spec for the retry; GITHUB_TOKEN would not start this workflow
+        run: npx --prefix .sandcastle tsx .sandcastle/spec/blocked.ts

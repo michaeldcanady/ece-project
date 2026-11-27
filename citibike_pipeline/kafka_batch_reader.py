@@ -4,60 +4,18 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from confluent_kafka import Consumer
+from .ranges import MutableRanges, Ranges, cap_ranges
+from .record import Record
 
 log = logging.getLogger(__name__)
 
-# topic -> partition -> (start, end_exclusive)
-Ranges = Dict[str, Dict[int, Tuple[int, int]]]
-
-
-@dataclass
-class Record:
-    topic: str
-    partition: int
-    offset: int
-    timestamp_ms: Optional[int]
-    key: Optional[str]
-    value: bytes
-
-
-def ranges_to_json(ranges: Ranges) -> Dict[str, Dict[str, List[int]]]:
-    return {t: {str(p): [s, e] for p, (s, e) in parts.items()} for t, parts in ranges.items()}
-
-
-def ranges_from_json(obj: Dict[str, Dict[str, List[int]]]) -> Ranges:
-    return {t: {int(p): (int(se[0]), int(se[1])) for p, se in parts.items()} for t, parts in obj.items()}
-
-
-def total_messages(ranges: Ranges) -> int:
-    return sum(e - s for parts in ranges.values() for (s, e) in parts.values())
-
-
-def cap_ranges(positions: Ranges, max_per_partition: Optional[int] = None) -> Ranges:
-    """The non-empty (start, end) ranges of `positions`, at most `max_per_partition` long."""
-    ranges: Ranges = {}
-    for topic, parts in positions.items():
-        for pid, (start, high) in parts.items():
-            end = high if max_per_partition is None else min(high, start + max_per_partition)
-            if end > start:
-                ranges.setdefault(topic, {})[pid] = (start, end)
-    return ranges
-
-
-def fits_within(ranges: Ranges, positions: Ranges) -> bool:
-    """True if every range starts where `positions` starts and ends at or below its high watermark."""
-    for topic, parts in ranges.items():
-        for pid, (start, end) in parts.items():
-            pos = positions.get(topic, {}).get(pid)
-            if pos is None or pos[0] != start or end > pos[1]:
-                return False
-    return True
-
 
 class KafkaBatchReader:
-    def __init__(self, bootstrap_servers: str, group_id: str, consumer: Any = None):
+    def __init__(self, bootstrap_servers: str, group_id: str, consumer: Optional[Consumer] = None):
         if consumer is None:
             from confluent_kafka import Consumer
             consumer = Consumer({
@@ -78,7 +36,7 @@ class KafkaBatchReader:
         offset, or the low watermark when nothing is committed or retention has passed the commit."""
         from confluent_kafka import TopicPartition
 
-        positions: Ranges = {}
+        positions: MutableRanges = {}
         for topic in topics:
             md = self._c.list_topics(topic, timeout=10)
             tmeta = md.topics.get(topic)
@@ -103,7 +61,7 @@ class KafkaBatchReader:
         if not pending:
             return []
         self._c.assign([TopicPartition(t, p, s) for (t, p), (s, _e) in pending.items()])
-        done = set()
+        done: Set[Tuple[str, int]] = set()
         out: List[Record] = []
         deadline = time.monotonic() + timeout_s
         while len(done) < len(pending):
@@ -113,22 +71,27 @@ class KafkaBatchReader:
             msg = self._c.poll(1.0)
             if msg is None:
                 continue
-            if msg.error():
-                if msg.error().code() == KafkaError._PARTITION_EOF:
+            error = msg.error()
+            if error is not None:
+                if error.code() == KafkaError._PARTITION_EOF:
                     continue
-                raise RuntimeError("kafka error: %s" % msg.error())
-            tp = (msg.topic(), msg.partition())
+                raise RuntimeError("kafka error: %s" % error)
+            topic, partition, offset = msg.topic(), msg.partition(), msg.offset()
+            if topic is None or partition is None or offset is None:
+                raise RuntimeError("kafka message without a position")
+            tp = (topic, partition)
             if tp not in pending or tp in done:
                 continue
             start, end = pending[tp]
-            if msg.offset() >= end:
+            if offset >= end:
                 done.add(tp)
                 continue
             ts_type, ts = msg.timestamp()
-            key = msg.key().decode("utf-8", "replace") if msg.key() else None
-            out.append(Record(msg.topic(), msg.partition(), msg.offset(),
-                              ts if ts_type != 0 and ts >= 0 else None, key, msg.value()))
-            if msg.offset() >= end - 1:
+            raw_key = msg.key()
+            key = raw_key.decode("utf-8", "replace") if isinstance(raw_key, bytes) and raw_key else None
+            out.append(Record(topic, partition, offset, ts if ts_type != 0 and ts >= 0 else None, key,
+                              msg.value() or b""))
+            if offset >= end - 1:
                 done.add(tp)
         self._c.unassign()
         out.sort(key=lambda r: (r.topic, r.partition, r.offset))

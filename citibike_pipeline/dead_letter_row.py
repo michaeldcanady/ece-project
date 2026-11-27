@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Sequence
 
-from .kafka_io import Record
+from .record import Record
 from .timeutil import from_epoch_ms
 
 

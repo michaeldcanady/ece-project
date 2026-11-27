@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import { claudeAgent, fail, required, writeJson } from "../shared/common";
+import { claudeAgent, fail, required, writeJson, writingStyle } from "../shared/common";
 import { runWithExtraction } from "../shared/run-with-extraction";
 import { specSchema } from "./spec-plan";
 
@@ -32,6 +32,8 @@ try {
     promptArgs: {
       ISSUE_TITLE: issue.title,
       ISSUE_NOTE: note,
+      WRITING_STYLE: writingStyle(),
+      STRENGTH_RUBRIC: fs.readFileSync(here("../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(here("../shared/spec-format.md"), "utf8"),
     },
     output: sandcastle.Output.object({ tag: "output", schema: specSchema }),

@@ -13,8 +13,11 @@ from typing import Callable, List, Optional
 import pyarrow as pa
 
 from .config import PipelineConfig
-from .metrics import Obs, station_state, window_metrics
-from .timeutil import epoch, floor_5min, from_epoch
+from .obs import Obs
+from .station_state import StationState, station_state
+from .station_window import StationWindow
+from .timeutil import epoch, floor_5min
+from .window_metrics import WindowMetrics
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
 STATUS_ROW_COLS = [
@@ -50,52 +53,6 @@ class StatusRow:
     def from_table(table: pa.Table) -> List[StatusRow]:
         cols = {c: table[c].to_pylist() for c in STATUS_ROW_COLS}
         return [StatusRow(**{c: cols[c][i] for c in STATUS_ROW_COLS}) for i in range(table.num_rows)]
-
-
-@dataclass(frozen=True)
-class StationState:
-    station_id: str
-    station_name: Optional[str]
-    lat: Optional[float]
-    lon: Optional[float]
-    capacity: Optional[int]
-    state: str
-    num_bikes_available: int
-    num_ebikes_available: int
-    num_docks_available: int
-    last_reported: int
-    age_s: int
-    observed_at: datetime
-    net_change_15m: Optional[int]
-    rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk: Optional[str]
-    temperature_c: Optional[float]
-    precipitation_mm: Optional[float]
-    as_of: datetime
-    batch_id: str
-
-
-@dataclass(frozen=True)
-class StationWindow:
-    station_id: str
-    as_of: datetime
-    window_start: datetime
-    n_obs: int
-    coverage_min: float
-    bikes_first: int
-    bikes_last: int
-    docks_first: int
-    docks_last: int
-    net_change: int
-    rate_per_min: Optional[float]
-    docks_rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk_empty: bool
-    at_risk_full: bool
-    batch_id: str
 
 
 @dataclass(frozen=True)
@@ -152,27 +109,23 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
     windows: List[StationWindow] = []
     states: List[StationState] = []
     for sid, r in sorted(latest.items()):
-        wm = window_metrics(obs[sid], as_of_s, cfg)
+        m = WindowMetrics.over(obs[sid], as_of_s, cfg)
         age = int(as_of_s) - r.last_reported
         state = station_state(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
                               r.num_bikes_available, r.num_docks_available)
-        at_risk = None
-        if wm:
-            window_start = from_epoch(wm.pop("window_start"))
-            windows.append(StationWindow(station_id=sid, as_of=as_of, window_start=window_start,
-                                         batch_id=batch_id, **wm))
-            if state == "OK":
-                at_risk = "EMPTY" if wm["at_risk_empty"] else ("FULL" if wm["at_risk_full"] else None)
+        if m:
+            windows.append(StationWindow.from_metrics(sid, as_of, batch_id, m))
         states.append(StationState(
             station_id=sid, station_name=r.station_name, lat=r.lat, lon=r.lon, capacity=r.capacity,
             state=state, num_bikes_available=r.num_bikes_available,
             num_ebikes_available=r.num_ebikes_available, num_docks_available=r.num_docks_available,
             last_reported=r.last_reported, age_s=age, observed_at=r.fetched_at,
-            net_change_15m=wm["net_change"] if wm else None,
-            rate_per_min=wm["rate_per_min"] if wm else None,
-            minutes_to_empty=wm["minutes_to_empty"] if wm else None,
-            minutes_to_full=wm["minutes_to_full"] if wm else None,
-            at_risk=at_risk, temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
+            net_change_15m=m.net_change if m else None,
+            rate_per_min=m.rate_per_min if m else None,
+            minutes_to_empty=m.minutes_to_empty if m else None,
+            minutes_to_full=m.minutes_to_full if m else None,
+            at_risk=m.at_risk if m and state == "OK" else None,   # only an OK station can be at risk
+            temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
             as_of=as_of, batch_id=batch_id))
 
     total = len(states)

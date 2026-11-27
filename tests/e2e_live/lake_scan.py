@@ -8,7 +8,8 @@ from typing import List, Tuple
 
 import pyarrow as pa
 
-from citibike_pipeline.storage import Storage, read_parquet
+from citibike_pipeline.storage import Storage
+from citibike_pipeline.storage_ops import read_parquet
 
 
 def read_all(storage: Storage, prefix: str, columns: List[str]) -> pa.Table:

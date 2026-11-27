@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "confluent-kafka>=2.3,<3",
+    "pydantic>=2.13.5",
     "requests>=2.31,<3",
 ]
 
@@ -16,7 +17,7 @@ citibike-status = "citibike_pipeline.status:main"
 [dependency-groups]
 # Everything runs in the Airflow image, which provides pyarrow/boto3 pinned by Airflow's constraints.
 # They are dev-only here so the libraries can be tested locally.
-dev = ["pytest>=7", "pyarrow>=11", "boto3>=1.28", "moto[s3]>=4.2", "ruff>=0.6"]
+dev = ["pytest>=7", "pyarrow>=11", "boto3>=1.28", "moto[s3]>=4.2", "ruff>=0.6", "mypy>=1.14"]
 
 [build-system]
 requires = ["hatchling"]
@@ -42,3 +43,16 @@ ignore = ["UP006", "UP007", "UP031", "UP035", "UP045"]
 known-first-party = ["citibike_contract", "citibike_producer", "citibike_pipeline"]
 # dags/ imports its sibling _common the way Airflow does (the DAG folder is on sys.path).
 known-third-party = ["_common"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["citibike_contract", "citibike_pipeline", "citibike_producer", "dags", "scripts"]
+explicit_package_bases = true
+mypy_path = "dags"            # dags/ imports its sibling _common the way Airflow does
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["airflow.*", "confluent_kafka.*", "pyarrow.*", "boto3.*", "botocore.*", "moto.*", "requests.*", "pendulum.*"]
+ignore_missing_imports = true

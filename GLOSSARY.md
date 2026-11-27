@@ -52,11 +52,21 @@ _Avoid_: message, record (a record is what Kafka stores), observation row (that 
 The current weather at a location, parsed from a weather envelope's payload.
 _Avoid_: message, record, reading
 
+**Station information**:
+One station's fixed details (name, location, capacity), parsed from a station-information envelope's payload.
+The hourly build keeps the latest per station, and Enrichment attaches it to each Station status.
+_Avoid_: dimension, station metadata
+
 **Enrichment**:
 The step that turns a Batch's Station statuses into curated rows: it drops duplicate deliveries, flags repeats,
 out-of-order, stale and unknown-station observations, and attaches the station dimension and the latest weather
 at or before each observation. Pure: it reads no storage.
 _Avoid_: transform, processing
+
+**Quality report**:
+The daily summary of one UTC day's data health: poll outcomes per job, rejected envelopes by reason, and how
+stale, repeated and empty the station data was. Written as `report.json` and `report.md`.
+_Avoid_: data report, daily report
 
 **Kafka identity**:
 The (topic, partition, offset) triple that names the message a row came from; no two rows of a lake
@@ -142,3 +152,23 @@ _Avoid_: backfill, resend
 The key an envelope is sent under: the station for station events, the location for weather, the job
 for poll logs. It decides the partition, and on the station information topic, which envelope Kafka keeps.
 _Avoid_: Kafka identity (that names a stored message; the key groups messages)
+
+## The agent workflows
+
+**Factory**:
+The whole loop from an issue to a reviewed pull request: intake, spec, implementation and review. A human reviews the
+pull request; nothing merges without that.
+_Avoid_: pipeline (that names the data pipeline), agent workflows (that names its parts)
+
+**Door**:
+How reversible a change is. A one-way door cannot be undone by reverting it; a two-way door can.
+_Avoid_: risk, impact
+
+**Spec**:
+A GitHub issue body that says what to build and how to check it. The issue is its own spec; the pull request that
+closes it records the delivery.
+_Avoid_: ticket, design doc
+
+**Strength**:
+How much of a spec's work an agent can do unattended, set by the `strength:` label on the issue.
+_Avoid_: size, priority

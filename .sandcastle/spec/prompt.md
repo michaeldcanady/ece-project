@@ -28,4 +28,14 @@ Title: {{ISSUE_TITLE}}
 
 {{SPEC_FORMAT}}
 
+# STRENGTH
+
+Also rate the spec honestly. A human asked for it, so `speculative` is allowed: a low rating is information for them.
+
+{{STRENGTH_RUBRIC}}
+
 Finish with the `<output>` tag only when the spec is complete.
+
+# WRITING STYLE
+
+{{WRITING_STYLE}}

@@ -11,10 +11,12 @@ from citibike_contract import TOPIC_STATUS, Envelope, encode, parse_iso
 from citibike_pipeline import batch, lake, serving
 from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.kafka_io import KafkaBatchReader
+from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
+from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.quality import daily_quality
 from citibike_pipeline.station_info import build_dim_station
-from citibike_pipeline.storage import LocalStorage, read_parquet
+from citibike_pipeline.storage_ops import read_parquet
+from citibike_pipeline.verdict import Verdict
 from citibike_producer.synthetic import generate
 
 START = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
@@ -289,7 +291,7 @@ def test_batch_log_holds_measured_values_not_constants(tmp_path, capture):
 def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     out = build_dim_station(reader, storage, cfg)
-    assert out["stations"] == 40
+    assert out.stations == 40
     dim = read_parquet(storage, lake.DIM_STATION_CURRENT).to_pylist()
     assert len(dim) == 40 and {"lat", "lon", "capacity"} <= set(dim[0])
     consumer.log[("citibike.station_info", 0)] = []
@@ -308,14 +310,15 @@ def batches_in_hour(storage, table=CURATED, hour=HOUR):
 
 
 def test_compaction_is_lossless_idempotent_and_verified(tmp_path, capture):
+    from citibike_pipeline.compact_hour import CompactHour
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
     on_disk = len(curated_rows(storage))
     before = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
     n_batches = len(batches_in_hour(storage))
     res = CURATED.compact_hour(storage, HOUR)
-    assert res == {"sources": n_batches, "rows": before.num_rows} and n_batches > 1
-    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0                       # idempotent
+    assert res == CompactHour(sources=n_batches, rows=before.num_rows) and n_batches > 1
+    assert CURATED.compact_hour(storage, HOUR).sources == 0                       # idempotent
     after = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
     assert sorted(after.to_pylist(), key=str) == sorted(before.to_pylist(), key=str)
     assert len(curated_rows(storage)) == on_disk                                      # nothing lost on disk
@@ -345,7 +348,7 @@ def test_read_window_is_lossless_when_compaction_runs_mid_read(tmp_path, capture
     storage.armed = True
     got = CURATED.read_window(storage, START, START + timedelta(hours=1), cols)
     assert not storage.armed                                            # compaction really ran mid-read
-    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0          # ... and finished
+    assert CURATED.compact_hour(storage, HOUR).sources == 0          # ... and finished
     assert sorted(got.to_pylist(), key=str) == sorted(expected.to_pylist(), key=str)
 
 
@@ -467,17 +470,17 @@ def test_daily_quality_report(tmp_path, capture):
     drain(reader, storage, cfg)
     lake.compact_due(storage, now=START + timedelta(hours=4))
     rep = daily_quality(storage, cfg, START.date())
-    poll = rep["polls"]["station_status"]
-    assert poll["polls_logged"] == MINUTES and poll["gaps_over_threshold"] == 0
-    assert poll["completeness"] == pytest.approx(MINUTES / 1440.0, abs=1e-4)
-    assert rep["verdict"] == "fail"                                    # 40 of 1440 minutes captured
-    obs = rep["station_observations"]
-    assert obs["distinct_stations"] == 40 and obs["stale_share"] > 0
-    assert rep["dlq"]["by_reason"] == {"bad_num_bikes_available": MINUTES}
-    assert rep["batches"]["batches"] > 1 and rep["batches"]["latency_s"]["median_of_batch_p50"] is not None
+    poll = rep.polls["station_status"]
+    assert poll.polls_logged == MINUTES and poll.gaps_over_threshold == 0
+    assert poll.completeness == pytest.approx(MINUTES / 1440.0, abs=1e-4)
+    assert rep.verdict == Verdict.FAIL                                    # 40 of 1440 minutes captured
+    obs = rep.station_observations
+    assert obs.distinct_stations == 40 and obs.stale_share > 0
+    assert rep.dlq.by_reason == {"bad_num_bikes_available": MINUTES}
+    assert rep.batches is not None and rep.batches.batches > 1 and rep.batches.latency_s.median_of_batch_p50 is not None
     assert storage.exists("quality/daily/dt=2026-10-20/report.json")
     assert storage.exists("quality/daily/dt=2026-10-20/report.md")
-    assert obs["top_empty_stations"][0]["station_id"] == "st-002"
+    assert obs.top_empty_stations[0].station_id == "st-002"
 
 
 def test_quality_detects_gap(tmp_path):
@@ -502,8 +505,8 @@ def test_quality_detects_gap(tmp_path):
     reader = KafkaBatchReader("x", "g", consumer=consumer)
     drain(reader, storage, cfg)
     rep = daily_quality(storage, cfg, START.date())
-    assert rep["polls"]["station_status"]["gaps_over_threshold"] == 1
-    assert rep["polls"]["station_status"]["gap_seconds_total"] >= 170
+    assert rep.polls["station_status"].gaps_over_threshold == 1
+    assert rep.polls["station_status"].gap_seconds_total >= 170
 
 
 def test_serving_time_never_moves_backwards_when_partitions_skew(tmp_path, capture):

@@ -12,7 +12,7 @@ from typing import Iterator, List, Optional, TextIO, Tuple
 from citibike_contract import TOPIC_BY_EVENT_TYPE, Envelope, InvalidEnvelope, MissingKafkaKey, decode, kafka_key, utcnow
 
 from .config import Config
-from .sink import KafkaSink
+from .kafka_sink import KafkaSink
 
 log = logging.getLogger(__name__)
 

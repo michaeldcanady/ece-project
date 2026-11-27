@@ -10,10 +10,13 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from typing import Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from .config import Config
 from .create_topics import topic_specs
+
+if TYPE_CHECKING:
+    from confluent_kafka import Consumer
 
 # Topic names come from the same specs citibike_setup creates, so the check cannot drift from setup.
 REQUIRED_TOPICS = [name for name, _partitions, _config in topic_specs(retention_days=1)]
@@ -22,7 +25,7 @@ REQUIRED_TOPICS = [name for name, _partitions, _config in topic_specs(retention_
 Message = Tuple[int, int, Optional[str], str]
 
 
-def build_consumer(cfg: Config) -> Any:
+def build_consumer(cfg: Config) -> Consumer:
     from confluent_kafka import Consumer
 
     return Consumer({
@@ -32,14 +35,14 @@ def build_consumer(cfg: Config) -> Any:
     })
 
 
-def missing_topics(consumer: Any, timeout_s: float = 10.0) -> List[str]:
+def missing_topics(consumer: Consumer, timeout_s: float = 10.0) -> List[str]:
     """Topics citibike_setup should have created but the broker does not have.
     Raises (KafkaException) if the broker is unreachable."""
     existing = consumer.list_topics(timeout=timeout_s).topics
     return [t for t in REQUIRED_TOPICS if t not in existing]
 
 
-def peek(consumer: Any, topic: str, count: int, newest: bool = False, timeout_s: float = 10.0) -> List[Message]:
+def peek(consumer: Consumer, topic: str, count: int, newest: bool = False, timeout_s: float = 10.0) -> List[Message]:
     """Up to `count` messages from each partition: the oldest, or the newest with `newest`."""
     from confluent_kafka import TopicPartition
 
@@ -66,13 +69,17 @@ def peek(consumer: Any, topic: str, count: int, newest: bool = False, timeout_s:
     try:
         while pending and time.monotonic() < deadline:
             msg = consumer.poll(1.0)
-            if msg is None or msg.error() or msg.partition() not in pending:
+            if msg is None or msg.error():
                 continue
-            if msg.offset() < ends[msg.partition()]:
-                key = msg.key().decode("utf-8", "replace") if msg.key() else None
-                out.append((msg.partition(), msg.offset(), key, (msg.value() or b"").decode("utf-8", "replace")))
-            if msg.offset() >= ends[msg.partition()] - 1:      # compacted topics can skip offsets
-                pending.discard(msg.partition())
+            partition, offset = msg.partition(), msg.offset()
+            if partition is None or offset is None or partition not in pending:
+                continue
+            if offset < ends[partition]:
+                raw_key = msg.key()
+                key = raw_key.decode("utf-8", "replace") if isinstance(raw_key, bytes) and raw_key else None
+                out.append((partition, offset, key, (msg.value() or b"").decode("utf-8", "replace")))
+            if offset >= ends[partition] - 1:      # compacted topics can skip offsets
+                pending.discard(partition)
     finally:
         consumer.unassign()
     if pending:
@@ -80,7 +87,7 @@ def peek(consumer: Any, topic: str, count: int, newest: bool = False, timeout_s:
     return sorted(out)
 
 
-def main(argv: Optional[List[str]] = None, consumer: Any = None) -> int:
+def main(argv: Optional[List[str]] = None, consumer: Optional[Consumer] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m citibike_producer.broker", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
