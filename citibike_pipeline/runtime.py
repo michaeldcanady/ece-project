@@ -5,8 +5,9 @@ from contextlib import contextmanager
 from typing import Generator, Tuple
 
 from .config import PipelineConfig
-from .kafka_io import KafkaBatchReader
-from .storage import Storage, storage_from_config
+from .kafka_batch_reader import KafkaBatchReader
+from .storage import Storage
+from .storage_ops import storage_from_config
 
 
 def build() -> Tuple[PipelineConfig, Storage]:

@@ -16,28 +16,29 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from typing import List, Mapping, Optional, Tuple
 
+from citibike_contract import JsonObject
+
 from . import lake, serving
-from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
+from .batch_log import BatchLog, BatchLogEntry, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
-from .enrichment import Dimension, enrich_status
+from .enrichment import enrich_status
 from .enrichment_context import EnrichmentContext
-from .kafka_io import (
-    KafkaBatchReader,
-    Ranges,
-    cap_ranges,
-    fits_within,
-    ranges_from_json,
-    ranges_to_json,
-    total_messages,
-)
+from .hour_partitions import part_key
+from .jsonfields import as_int, as_object
+from .kafka_batch_reader import KafkaBatchReader
+from .plan import Plan
+from .ranges import cap_ranges, fits_within, ranges_to_json, total_messages
 from .rows import CuratedWeatherRow, as_mappings
 from .schemas import (
     DLQ,
     to_table,
 )
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
-from .storage import Storage, get_json, put_json, put_parquet, read_parquet
+from .station_information import StationInformation
+from .stats import Stats
+from .storage import Storage
+from .storage_ops import get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -53,52 +54,6 @@ def safe_id(run_id: str) -> str:
 # Each record has to_json/from_json so it can travel through Airflow XCom. The JSON keys are the ones the
 # steps used to pass as dicts, so values already in flight and the files under ops/batch_plan/ stay readable.
 # from_json indexes every field (a missing one raises KeyError), except Published.at_risk: old in-flight XCom lacks it.
-
-JsonObject = Mapping[str, object]
-
-
-@dataclass(frozen=True)
-class Plan:
-    """A batch's offset ranges, fixed before anything is read, and the runs that planned and took it."""
-    run_id: str
-    first_run_id: str
-    batch_id: str
-    planned_at: datetime
-    ranges: Ranges
-    total_messages: int
-
-    @property
-    def has_data(self) -> bool:
-        return self.total_messages > 0
-
-    def to_json(self) -> JsonObject:
-        return {"run_id": self.run_id, "first_run_id": self.first_run_id, "batch_id": self.batch_id,
-                "planned_at": iso(self.planned_at), "ranges": ranges_to_json(self.ranges),
-                "total_messages": self.total_messages}
-
-    @classmethod
-    def from_json(cls, obj: JsonObject) -> Plan:
-        return cls(run_id=str(obj["run_id"]), first_run_id=str(obj["first_run_id"]), batch_id=str(obj["batch_id"]),
-                   planned_at=parse_iso(str(obj["planned_at"])), ranges=ranges_from_json(obj["ranges"]),
-                   total_messages=int(obj["total_messages"]))
-
-
-@dataclass(frozen=True)
-class Stats:
-    """What process_batch counted and wrote for a batch. The JSON keeps the counts flat."""
-    batch_id: str
-    as_of: datetime
-    counts: Counts
-    status_hours: Tuple[datetime, ...]
-
-    def to_json(self) -> JsonObject:
-        return {"batch_id": self.batch_id, "as_of": iso(self.as_of), **self.counts.to_json(),
-                "status_hours": [iso(h) for h in self.status_hours]}
-
-    @classmethod
-    def from_json(cls, obj: JsonObject) -> Stats:
-        return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])), counts=Counts.from_json(obj),
-                   status_hours=tuple(parse_iso(str(h)) for h in obj["status_hours"]))
 
 
 @dataclass(frozen=True)
@@ -116,7 +71,7 @@ class Published:
     def from_json(cls, obj: JsonObject) -> Published:
         published_at = obj["published_at"]
         return cls(published_at=parse_iso(str(published_at)) if published_at else None,
-                   stations=int(obj["stations"]), at_risk=int(obj.get("at_risk", 0)))
+                   stations=as_int(obj["stations"]), at_risk=as_int(obj.get("at_risk", 0)))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -126,13 +81,18 @@ class Published:
 PENDING_PLAN = "ops/batch_plan/pending.json"
 
 
+def _pending_plan(storage: Storage) -> Optional[Plan]:
+    """The plan stored as pending (planned, offsets not yet committed), or None."""
+    return Plan.from_json(as_object(get_json(storage, PENDING_PLAN))) if storage.exists(PENDING_PLAN) else None
+
+
 def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                now: Optional[datetime] = None) -> Plan:
     """The batch to process next. Reuses the pending (planned, not yet committed) plan when it still
     starts at the committed offsets and all its offsets still exist, so a rerun of a failed batch keeps
     its batch_id. Otherwise, e.g. after a broker reset recreated the topics, it plans afresh."""
     positions = reader.positions(DATA_TOPICS)
-    pending = Plan.from_json(get_json(storage, PENDING_PLAN)) if storage.exists(PENDING_PLAN) else None
+    pending = _pending_plan(storage)
     if pending is not None and fits_within(pending.ranges, positions):
         plan = replace(pending, run_id=run_id)
         if pending.first_run_id != run_id:
@@ -140,7 +100,7 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
     else:
         ranges = cap_ranges(positions, cfg.max_batch_per_partition)
         batch_id = "b" + hashlib.sha1(json.dumps(ranges_to_json(ranges), sort_keys=True).encode()).hexdigest()[:12]
-        planned_at = parse_iso(iso(now or utcnow()))        # to the millisecond, as stored
+        planned_at = parse_iso((now or utcnow()).isoformat(timespec="milliseconds"))   # to the millisecond, as stored
         plan = Plan(run_id=run_id, first_run_id=run_id, batch_id=batch_id, planned_at=planned_at,
                     ranges=ranges, total_messages=total_messages(ranges))
         if plan.has_data:
@@ -153,11 +113,11 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
 # process
 # ---------------------------------------------------------------------------------------------
 
-def _load_dim(storage: Storage) -> Optional[Dimension]:
+def _load_dim(storage: Storage) -> Optional[Mapping[str, StationInformation]]:
     if not storage.exists(lake.DIM_STATION_CURRENT):
         return None
     t = read_parquet(storage, lake.DIM_STATION_CURRENT)
-    return {r["station_id"]: r for r in t.to_pylist()}
+    return {s.station_id: s for s in StationInformation.from_table(t)}
 
 
 def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
@@ -180,7 +140,7 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     status_hours = lake.CURATED_STATUS.write(storage, batch_id, as_mappings(status_rows))
     lake.CURATED_WEATHER.write(storage, batch_id, as_mappings(weather_rows))
     if decoded.dead_letters:
-        put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
+        put_parquet(storage, part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
                     to_table([asdict(r) for r in decoded.dead_letters], DLQ))
 
     stats = Stats(batch_id=batch_id, as_of=as_of, status_hours=tuple(status_hours),
@@ -234,7 +194,8 @@ def finalize_batch(plan: Plan, stats: Stats, published: Published,
     BatchLog(storage).record(entry)
 
     reader.commit(plan.ranges)          # last: only after every output exists
-    if storage.exists(PENDING_PLAN) and Plan.from_json(get_json(storage, PENDING_PLAN)).batch_id == plan.batch_id:
+    pending = _pending_plan(storage)
+    if pending is not None and pending.batch_id == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
     log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, latencies.p50_s,
              latencies.p95_s)

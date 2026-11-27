@@ -20,7 +20,7 @@ from airflow.decorators import dag, task
 def citibike_ingest_status():
     @task
     def poll(**context):
-        return run_poll("station_status", context)
+        return run_poll("station_status", context["ti"])
 
     poll()
 

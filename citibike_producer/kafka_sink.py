@@ -4,35 +4,18 @@ from __future__ import annotations
 import gzip
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from citibike_contract import Envelope, encode
 
 from .config import Config
+from .delivery_batch import DeliveryBatch
+from .producer_like import ProducerLike
 
 log = logging.getLogger(__name__)
 
 
-class DeliveryBatch:
-    """Counts delivery results for the messages of one poll."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.sent = 0
-        self.delivered = 0
-        self.failed = 0
-        self.last_error: Optional[str] = None
-
-    def callback(self, err: Any, msg: Any) -> None:
-        with self._lock:
-            if err is not None:
-                self.failed += 1
-                self.last_error = str(err)
-            else:
-                self.delivered += 1
-
-
-def build_kafka_producer(cfg: Config):
+def build_kafka_producer(cfg: Config) -> ProducerLike:
     from confluent_kafka import Producer
 
     return Producer({
@@ -49,7 +32,7 @@ def build_kafka_producer(cfg: Config):
 
 
 class KafkaSink:
-    def __init__(self, cfg: Config, producer: Any = None):
+    def __init__(self, cfg: Config, producer: Optional[ProducerLike] = None):
         self._p = producer if producer is not None else build_kafka_producer(cfg)
         self._tee_lock = threading.Lock()
         self._tee = gzip.open(cfg.tee_path, "at", encoding="utf-8") if cfg.tee_path else None
@@ -57,15 +40,13 @@ class KafkaSink:
     def send(self, topic: str, key: str, envelope: Envelope, batch: Optional[DeliveryBatch] = None,
              timestamp_ms: Optional[int] = None) -> None:
         value = encode(envelope)
-        kwargs: Dict[str, Any] = {"key": key.encode("utf-8"), "value": value}
+        on_delivery = batch.callback if batch is not None else None
         if batch is not None:
-            kwargs["on_delivery"] = batch.callback
             batch.sent += 1
-        if timestamp_ms is not None:
-            kwargs["timestamp"] = timestamp_ms
         while True:
             try:
-                self._p.produce(topic, **kwargs)
+                self._p.produce(topic, key=key.encode("utf-8"), value=value, on_delivery=on_delivery,
+                                timestamp=timestamp_ms or 0)      # 0 lets the client stamp the send time
                 break
             except BufferError:
                 self._p.poll(0.5)   # local queue full: serve callbacks, then retry

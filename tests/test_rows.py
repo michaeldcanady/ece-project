@@ -2,10 +2,10 @@
 from dataclasses import fields
 
 from citibike_pipeline.dead_letter_row import DeadLetterRow
-from citibike_pipeline.quality import STATUS_COLS
 from citibike_pipeline.raw_row import RawRow
 from citibike_pipeline.rows import CuratedStatusRow, CuratedWeatherRow
 from citibike_pipeline.schemas import DLQ, RAW, STATUS, WEATHER
+from citibike_pipeline.section_status import STATUS_COLS
 from citibike_pipeline.snapshot import STATUS_ROW_COLS, StatusRow
 
 

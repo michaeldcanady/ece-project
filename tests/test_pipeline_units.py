@@ -7,12 +7,15 @@ import pytest
 from citibike_contract import TOPIC_STATUS, Envelope, encode
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
-from citibike_pipeline.kafka_io import Record
+from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.obs import Obs
-from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
+from citibike_pipeline.record import Record
+from citibike_pipeline.rejected import Rejected
+from citibike_pipeline.s3_storage import S3Storage
+from citibike_pipeline.station_information import StationInformation
 from citibike_pipeline.station_state import station_state
-from citibike_pipeline.storage import LocalStorage, S3Storage
-from citibike_pipeline.validation import validate_station_info_payload
+from citibike_pipeline.station_status import StationStatus
+from citibike_pipeline.weather_observation import WeatherObservation
 from citibike_pipeline.window_metrics import WindowMetrics
 
 CFG = PipelineConfig()
@@ -91,8 +94,12 @@ def test_weather_parse():
         ("bad_obs_time", "bad_temperature"))
 
 
-def test_other_payload_validators():
-    assert "bad_coordinates" in validate_station_info_payload({"station_id": "a", "lat": "x", "lon": 1})
+def test_station_information_parse():
+    assert StationInformation.parse({"station_id": "a", "lat": "x", "lon": 1}) == Rejected(("bad_coordinates",))
+    assert StationInformation.parse({"station_id": "", "lat": 1, "lon": 1, "capacity": 1.5}) == Rejected(
+        ("bad_station_id", "bad_capacity"))
+    assert StationInformation.parse({"station_id": "a", "lat": 1, "lon": 2, "region_id": 71}) == StationInformation(
+        "a", None, None, 1.0, 2.0, None, "71")
 
 
 def series(bikes, docks=None, step=30.0):
@@ -214,3 +221,12 @@ def test_s3_storage_with_moto(monkeypatch):
         with pytest.raises(FileNotFoundError):
             s.get("raw/x.bin")
         assert_list_is_plain_prefix_match(S3Storage("lake", "other", client=client))
+
+
+def test_ranges_survive_json_and_malformed_ranges_are_refused():
+    from citibike_pipeline.ranges import ranges_from_json, ranges_to_json
+    ranges = {"t": {0: (5, 9), 2: (0, 3)}, "empty": {}}
+    assert ranges_from_json(ranges_to_json(ranges)) == ranges
+    for bad in ([], {"t": []}, {"t": {"0": [1]}}, {"t": {"0": ["a", 2]}}):
+        with pytest.raises(ValueError):
+            ranges_from_json(bad)

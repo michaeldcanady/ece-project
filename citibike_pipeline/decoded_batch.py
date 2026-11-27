@@ -10,14 +10,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import DefaultDict, List, Mapping, Sequence, Tuple, Union
 
-from citibike_contract import EVENT_TYPE_BY_TOPIC, InvalidEnvelope, InvalidPollLog, PollLog, decode
+from citibike_contract import EVENT_TYPE_BY_TOPIC, InvalidEnvelope, InvalidPollLog, JsonObject, PollLog, decode
 
 from .config import PipelineConfig
 from .dead_letter_row import DeadLetterRow
-from .kafka_io import Record
-from .observations import Delivered, JsonObject, Rejected, StationStatus, WeatherObservation
+from .delivered import Delivered
 from .raw_row import RawRow
+from .record import Record
+from .rejected import Rejected
+from .station_status import StationStatus
 from .timeutil import epoch, from_epoch
+from .weather_observation import WeatherObservation
 
 _Parsed = Union[StationStatus, WeatherObservation, Rejected, None]
 

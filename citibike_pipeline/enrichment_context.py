@@ -11,8 +11,9 @@ from typing import Tuple
 from . import lake
 from .config import PipelineConfig
 from .decoded_batch import DecodedBatch
-from .enrichment import WEATHER_READING_COLS, PriorContext, WeatherReading
+from .enrichment import PriorContext
 from .storage import Storage
+from .weather_reading import WEATHER_READING_COLS, WeatherReading
 
 __all__ = ["EnrichmentContext"]
 

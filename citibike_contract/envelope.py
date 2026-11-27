@@ -8,24 +8,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Mapping, Optional
 
-from citibike_contract import KNOWN_EVENT_TYPES, SCHEMA_VERSION, iso, parse_iso
-
-
-class InvalidEnvelope(ValueError):
-    """The bytes are not a valid envelope. `reasons` lists every failed check, as DLQ reason codes:
-    empty_value, invalid_json, not_object, bad_schema_version, unknown_event_type, missing_payload,
-    missing_poll_id, bad_fetched_at, bad_replayed_at. The message is the codes joined by commas."""
-
-    def __init__(self, reasons: List[str]) -> None:
-        super().__init__(",".join(reasons))
-        self.reasons = list(reasons)
-
-
-class MissingKafkaKey(ValueError):
-    """The envelope's payload lacks the id its Kafka key is made from (station_id or location_id).
-    Such an envelope cannot be sent: the producer skips it and logs why."""
+from citibike_contract import KNOWN_EVENT_TYPES, SCHEMA_VERSION, JsonObject, iso, parse_iso
+from citibike_contract.invalid_envelope import InvalidEnvelope
+from citibike_contract.missing_kafka_key import MissingKafkaKey
 
 
 @dataclass(frozen=True)
@@ -38,7 +25,7 @@ class Envelope:
     feed_last_updated: Optional[int]   # source timestamp (epoch seconds)
     fetched_at: datetime               # ingest timestamp (UTC, producer clock)
     producer_version: Optional[str]
-    payload: Dict[str, Any]
+    payload: JsonObject
     replay: bool = False
     replayed_at: Optional[datetime] = None
 
@@ -56,13 +43,13 @@ def kafka_key(envelope: Envelope) -> str:
     if envelope.event_type == "weather_current":
         return _required_id(envelope, "location_id")
     if envelope.event_type == "poll_log":
-        job = envelope.payload.get("job") if isinstance(envelope.payload, dict) else None
+        job = envelope.payload.get("job") if isinstance(envelope.payload, Mapping) else None
         return str(job or "poll_log")
     raise ValueError("no Kafka key rule for event type %r" % envelope.event_type)
 
 
 def _required_id(envelope: Envelope, field: str) -> str:
-    value = envelope.payload.get(field) if isinstance(envelope.payload, dict) else None
+    value = envelope.payload.get(field) if isinstance(envelope.payload, Mapping) else None
     if value is None or value == "":
         raise MissingKafkaKey("%s envelope (poll %s) has no %s" % (envelope.event_type, envelope.poll_id, field))
     return str(value)
@@ -70,7 +57,7 @@ def _required_id(envelope: Envelope, field: str) -> str:
 
 def encode(envelope: Envelope) -> bytes:
     """Compact JSON in the wire's field order; the replay fields only for a replayed envelope."""
-    wire: Dict[str, Any] = {
+    wire: Mapping[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "event_type": envelope.event_type,
         "poll_id": envelope.poll_id,
@@ -83,8 +70,7 @@ def encode(envelope: Envelope) -> bytes:
         "payload": envelope.payload,
     }
     if envelope.replay:
-        wire["replay"] = True
-        wire["replayed_at"] = iso(envelope.replayed_at)
+        wire = {**wire, "replay": True, "replayed_at": iso(envelope.replayed_at)}
     return json.dumps(wire, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -135,7 +121,7 @@ def decode(value: Optional[bytes]) -> Envelope:
     )
 
 
-def _parse_timestamp(value: Any) -> Optional[datetime]:
+def _parse_timestamp(value: object) -> Optional[datetime]:
     if not isinstance(value, str):
         return None
     try:

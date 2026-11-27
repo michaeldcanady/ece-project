@@ -3,7 +3,7 @@ Called by the citibike_setup DAG."""
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Mapping, MutableMapping, Optional
 
 from confluent_kafka.admin import AdminClient, NewTopic
 
@@ -28,13 +28,13 @@ def topic_specs(retention_days: int):
 
 
 def ensure_topics(bootstrap_servers: str, replication: int = 1, retention_days: int = 21,
-                  admin: Any = None) -> Dict[str, str]:
+                  admin: Optional[AdminClient] = None) -> Mapping[str, str]:
     """Create any missing topic. Returns topic -> "created" | "exists"; raises if any creation failed."""
     admin = admin or AdminClient({"bootstrap.servers": bootstrap_servers})
     new = [NewTopic(n, num_partitions=p, replication_factor=replication, config=c)
            for n, p, c in topic_specs(retention_days)]
-    result: Dict[str, str] = {}
-    failed: Dict[str, str] = {}
+    result: MutableMapping[str, str] = {}
+    failed: MutableMapping[str, str] = {}
     for name, fut in admin.create_topics(new).items():
         try:
             fut.result()

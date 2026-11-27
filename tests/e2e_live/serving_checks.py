@@ -9,7 +9,8 @@ import pyarrow.types as pt
 from citibike_pipeline import serving
 from citibike_pipeline.batch_log import SERVING_BATCH_LOG
 from citibike_pipeline.schemas import BATCH_LOG, CURRENT_STATE, SYSTEM_AVAILABILITY
-from citibike_pipeline.storage import Storage, read_parquet
+from citibike_pipeline.storage import Storage
+from citibike_pipeline.storage_ops import read_parquet
 
 from .check_result import CheckResult
 

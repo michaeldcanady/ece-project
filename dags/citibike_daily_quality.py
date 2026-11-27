@@ -20,7 +20,7 @@ def citibike_daily_quality():
         cfg, storage = runtime.build()
         day = context["data_interval_start"].date()      # run at 00:30 covers the day that just ended
         result = daily_quality(storage, cfg, day)
-        return {"day": result["day_utc"], "verdict": result["verdict"]}
+        return {"day": result.day_utc, "verdict": result.verdict.value if result.verdict else None}
 
     report()
 

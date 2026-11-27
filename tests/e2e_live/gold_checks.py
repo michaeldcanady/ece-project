@@ -12,7 +12,8 @@ from collections import defaultdict
 from typing import List, Mapping, Optional, Tuple
 
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.storage import Storage, read_parquet
+from citibike_pipeline.storage import Storage
+from citibike_pipeline.storage_ops import read_parquet
 
 from .check_result import CheckResult
 from .lake_scan import read_all

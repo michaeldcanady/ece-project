@@ -11,7 +11,7 @@ from typing import Optional
 
 from citibike_contract import Envelope
 
-from .kafka_io import Record
+from .record import Record
 from .timeutil import from_epoch_ms
 
 

@@ -17,7 +17,9 @@ from typing import List, Optional, Sequence
 
 from citibike_contract import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, InvalidEnvelope, decode
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.kafka_io import KafkaBatchReader, Record, cap_ranges
+from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
+from citibike_pipeline.ranges import cap_ranges
+from citibike_pipeline.record import Record
 
 WEATHER_LOOKBACK = timedelta(hours=3)       # the as-of join wants the reading before the first status row
 _TAIL_PER_MINUTE = 1500                     # messages per status partition to read back per window minute

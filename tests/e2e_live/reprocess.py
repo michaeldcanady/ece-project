@@ -10,9 +10,10 @@ from typing import Mapping, Tuple
 
 from citibike_pipeline import batch
 from citibike_pipeline.config import DATA_TOPICS, PipelineConfig
-from citibike_pipeline.kafka_io import KafkaBatchReader, Ranges
+from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
+from citibike_pipeline.local_storage import LocalStorage
+from citibike_pipeline.ranges import Ranges
 from citibike_pipeline.station_info import build_dim_station
-from citibike_pipeline.storage import LocalStorage
 
 
 @dataclass(frozen=True)
