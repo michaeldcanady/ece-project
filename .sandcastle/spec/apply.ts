@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { specSchema } from "./spec-plan";
 import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
+import { speccedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
 
 /**
@@ -28,10 +29,7 @@ const spec = specSchema.parse(
 const current = issueFileSchema.parse(JSON.parse(fs.readFileSync(required("ISSUE_FILE"), "utf8")));
 
 const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "spec-")), "body.md");
-fs.writeFileSync(
-  file,
-  `${spec.body}\n\n---\nSpecced by the \`agent:spec\` workflow as \`strength:${spec.strength}\`. Add the \`agent:implement\` label to have it implemented.\n\n<details><summary>Original note</summary>\n\n${current.body}\n\n</details>\n`,
-);
+fs.writeFileSync(file, speccedBody(spec.body, spec.strength, current.body));
 
 ensureCandidateLabels(gh);
 gh(specEditArgs(issue, file, spec.strength, current.labels.map((l) => l.name)));
