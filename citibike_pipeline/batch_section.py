@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .batch_latency import BatchLatency
 from .batch_log import BatchLog
-from .metrics import pct
+from .percentile import pct
 from .storage import Storage
 
 

@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple
 from . import serving
 from .batch_log import BatchLog
 from .config import PipelineConfig
-from .metrics import pct
+from .percentile import pct
 from .storage import Storage
 from .storage_ops import storage_from_config
 from .timeutil import utcnow

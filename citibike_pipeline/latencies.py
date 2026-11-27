@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Iterable, Optional
 
-from .metrics import pct
+from .percentile import pct
 
 SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
 BATCH_LOG = "ops/batch_log"

@@ -27,7 +27,6 @@ BASELINE: Mapping[str, int] = {
     "citibike_pipeline/enrichment.py": 0,
     "citibike_pipeline/quality.py": 0,
     "citibike_pipeline/serving.py": 4,
-    "citibike_pipeline/snapshot.py": 0,
     "citibike_pipeline/station_info.py": 0,
     "citibike_pipeline/status.py": 3,
     "citibike_producer/synthetic.py": 6,

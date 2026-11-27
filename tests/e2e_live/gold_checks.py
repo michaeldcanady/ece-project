@@ -1,6 +1,6 @@
 """Checks 14-16: the gold tables follow the metric rules and agree with the curated rows they came from.
 
-Rules are those of `citibike_pipeline.metrics` and `snapshot`: a window holds the observations with
+Rules are those of `citibike_pipeline.window_metrics` and `snapshot`: a window holds the observations with
 as_of - 15 min < fetched_at <= as_of; a rate needs two observations and at least the minimum coverage; a station is
 at risk only when its time to empty or full is within the horizon and it moved at least the noise floor.
 The recompute reads the curated rows and applies the window rule itself, not the pipeline's functions.

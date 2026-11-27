@@ -13,7 +13,7 @@ from citibike_contract import InvalidPollLog, PollLog
 
 from . import lake
 from .config import PipelineConfig
-from .metrics import pct
+from .percentile import pct
 from .poll_gap import PollGap
 from .storage import Storage
 from .timeutil import epoch, from_epoch, iso

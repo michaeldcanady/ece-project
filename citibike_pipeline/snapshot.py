@@ -13,10 +13,11 @@ from typing import Callable, List, Optional
 import pyarrow as pa
 
 from .config import PipelineConfig
-from .metrics import window_metrics
 from .obs import Obs
-from .station_condition import StationCondition, station_condition
-from .timeutil import epoch, floor_5min, from_epoch
+from .station_state import StationState, station_state
+from .station_window import StationWindow
+from .timeutil import epoch, floor_5min
+from .window_metrics import WindowMetrics
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
 STATUS_ROW_COLS = [
@@ -52,52 +53,6 @@ class StatusRow:
     def from_table(table: pa.Table) -> List[StatusRow]:
         cols = {c: table[c].to_pylist() for c in STATUS_ROW_COLS}
         return [StatusRow(**{c: cols[c][i] for c in STATUS_ROW_COLS}) for i in range(table.num_rows)]
-
-
-@dataclass(frozen=True)
-class StationState:
-    station_id: str
-    station_name: Optional[str]
-    lat: Optional[float]
-    lon: Optional[float]
-    capacity: Optional[int]
-    state: str
-    num_bikes_available: int
-    num_ebikes_available: int
-    num_docks_available: int
-    last_reported: int
-    age_s: int
-    observed_at: datetime
-    net_change_15m: Optional[int]
-    rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk: Optional[str]
-    temperature_c: Optional[float]
-    precipitation_mm: Optional[float]
-    as_of: datetime
-    batch_id: str
-
-
-@dataclass(frozen=True)
-class StationWindow:
-    station_id: str
-    as_of: datetime
-    window_start: datetime
-    n_obs: int
-    coverage_min: float
-    bikes_first: int
-    bikes_last: int
-    docks_first: int
-    docks_last: int
-    net_change: int
-    rate_per_min: Optional[float]
-    docks_rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk_empty: bool
-    at_risk_full: bool
-    batch_id: str
 
 
 @dataclass(frozen=True)
@@ -144,40 +99,33 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
         return None
     ordered = sorted(rows, key=lambda r: (r.fetched_at, r.kafka_partition, r.kafka_offset))
     obs = defaultdict(list)  # station_id -> List[Obs]
+    latest = {}  # station_id -> its newest StatusRow
     for r in ordered:
         obs[r.station_id].append(Obs(epoch(r.fetched_at), r.num_bikes_available, r.num_docks_available))
-    latest = {r.station_id: r for r in ordered}  # station_id -> its newest StatusRow
+        latest[r.station_id] = r
 
     as_of_s = epoch(as_of)
     stale_s = cfg.stale_minutes * 60
     windows: List[StationWindow] = []
     states: List[StationState] = []
     for sid, r in sorted(latest.items()):
-        wm = window_metrics(obs[sid], as_of_s, cfg)
+        m = WindowMetrics.over(obs[sid], as_of_s, cfg)
         age = int(as_of_s) - r.last_reported
-        state = station_condition(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
+        state = station_state(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
                               r.num_bikes_available, r.num_docks_available)
-        risk: Optional[str] = None
-        if wm:
-            windows.append(StationWindow(
-                station_id=sid, as_of=as_of, window_start=from_epoch(wm.window_start), n_obs=wm.n_obs,
-                coverage_min=wm.coverage_min, bikes_first=wm.bikes_first, bikes_last=wm.bikes_last,
-                docks_first=wm.docks_first, docks_last=wm.docks_last, net_change=wm.net_change,
-                rate_per_min=wm.rate_per_min, docks_rate_per_min=wm.docks_rate_per_min,
-                minutes_to_empty=wm.minutes_to_empty, minutes_to_full=wm.minutes_to_full,
-                at_risk_empty=wm.at_risk_empty, at_risk_full=wm.at_risk_full, batch_id=batch_id))
-            if state == StationCondition.OK:
-                risk = "EMPTY" if wm.at_risk_empty else ("FULL" if wm.at_risk_full else None)
+        if m:
+            windows.append(StationWindow.from_metrics(sid, as_of, batch_id, m))
         states.append(StationState(
             station_id=sid, station_name=r.station_name, lat=r.lat, lon=r.lon, capacity=r.capacity,
-            state=state.value, num_bikes_available=r.num_bikes_available,
+            state=state, num_bikes_available=r.num_bikes_available,
             num_ebikes_available=r.num_ebikes_available, num_docks_available=r.num_docks_available,
             last_reported=r.last_reported, age_s=age, observed_at=r.fetched_at,
-            net_change_15m=wm.net_change if wm else None,
-            rate_per_min=wm.rate_per_min if wm else None,
-            minutes_to_empty=wm.minutes_to_empty if wm else None,
-            minutes_to_full=wm.minutes_to_full if wm else None,
-            at_risk=risk, temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
+            net_change_15m=m.net_change if m else None,
+            rate_per_min=m.rate_per_min if m else None,
+            minutes_to_empty=m.minutes_to_empty if m else None,
+            minutes_to_full=m.minutes_to_full if m else None,
+            at_risk=m.at_risk if m and state == "OK" else None,   # only an OK station can be at risk
+            temperature_c=r.temperature_c, precipitation_mm=r.precipitation_mm,
             as_of=as_of, batch_id=batch_id))
 
     total = len(states)

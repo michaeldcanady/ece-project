@@ -2,8 +2,8 @@
 from dataclasses import asdict, replace
 
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.metrics import window_metrics
 from citibike_pipeline.obs import Obs
+from citibike_pipeline.window_metrics import WindowMetrics
 from tests.e2e_live.gold_checks import window_row_problems
 
 CFG = PipelineConfig()
@@ -12,10 +12,10 @@ AS_OF = 10_000.0
 
 def row(bikes_first, bikes_last, docks_first, docks_last, minutes=14):
     obs = [Obs(AS_OF - minutes * 60, bikes_first, docks_first), Obs(AS_OF, bikes_last, docks_last)]
-    wm = window_metrics(obs, AS_OF, CFG)
-    assert wm is not None
-    r = asdict(wm)
-    r.pop("window_start")
+    m = WindowMetrics.over(obs, AS_OF, CFG)
+    assert m is not None
+    r = asdict(m)
+    del r["window_start"]
     return r
 
 

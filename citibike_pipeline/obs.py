@@ -1,10 +1,10 @@
-"""One observation of a station's counts at a time."""
+"""One station observation in event time: the input to a station's window."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class Obs:
     t: float      # observation time, epoch seconds (fetched_at)
     bikes: int
