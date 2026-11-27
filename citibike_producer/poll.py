@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
 from typing import List, Mapping, Optional, Sequence, Tuple
 
 from citibike_contract import (
@@ -29,10 +28,11 @@ from citibike_contract import (
 from .config import TOPIC_POLL_LOG, Config
 from .delivery_batch import DeliveryBatch
 from .feed_read import FeedRead
-from .fetch_result import FetchResult
 from .job_state import JobState
 from .kafka_sink import KafkaSink
+from .poll_delivery import PollDelivery
 from .poll_outcome import PollOutcome
+from .poll_run import PollRun
 from .poll_source import PollSource
 from .unreadable_feed import UnreadableFeed
 
@@ -41,27 +41,10 @@ log = logging.getLogger(__name__)
 FLUSH_TIMEOUT_S = 15.0
 
 
-@dataclass(frozen=True)
-class _Run:
-    """What one poll knows from its start: who polls, from which state, and the fetch."""
-    source: PollSource
-    state: JobState
-    cfg: Config
-    sink: KafkaSink
-    poll_id: str
-    res: FetchResult
-
-
-@dataclass(frozen=True)
-class _Delivery:
-    batch: DeliveryBatch
-    skipped: int
-
-
 def poll(source: PollSource, state: JobState, cfg: Config, sink: KafkaSink) -> PollOutcome:
     """Poll `source` once, publish its envelopes and the poll log, and return the outcome and the next state."""
     res = source.fetch()
-    run = _Run(source, state, cfg, sink, uuid.uuid4().hex, res)
+    run = PollRun(source, state, cfg, sink, uuid.uuid4().hex, res)
     if not res.ok:
         return _finish(run, res.outcome, error=res.error)
     try:
@@ -75,35 +58,42 @@ def poll(source: PollSource, state: JobState, cfg: Config, sink: KafkaSink) -> P
     keyed: List[Tuple[str, Envelope]] = []
     skipped = 0
     for payload in read.payloads:
+        if not isinstance(payload, Mapping):
+            if not source.skips_keyless_envelopes:
+                return _finish(run, OUTCOME_PARSE, read, PollDelivery(DeliveryBatch(), len(read.payloads)),
+                               "item is not an object")
+            log.warning("%s: skipping an item that is not an object", source.job)
+            skipped += 1
+            continue
         env = _envelope(run, read, payload)
         try:
             keyed.append((kafka_key(env), env))
         except MissingKafkaKey as exc:
             if not source.skips_keyless_envelopes:
-                return _finish(run, OUTCOME_PARSE, read, _Delivery(DeliveryBatch(), len(read.payloads)), str(exc))
+                return _finish(run, OUTCOME_PARSE, read, PollDelivery(DeliveryBatch(), len(read.payloads)), str(exc))
             log.warning("%s: skipping a station: %s", source.job, exc)
             skipped += 1
     return _finish_delivered(run, read, _publish(run, keyed, skipped))
 
 
-def _envelope(run: _Run, read: FeedRead, payload: object) -> Envelope:
+def _envelope(run: PollRun, read: FeedRead, payload: Mapping[str, object]) -> Envelope:
     return Envelope(event_type=run.source.event_type, poll_id=run.poll_id, source=run.source.source,
                     source_url=run.res.url, gbfs_version=read.gbfs_version,
                     feed_last_updated=read.feed_last_updated,
                     fetched_at=parse_iso(run.res.fetched_at or run.res.started_at),
                     producer_version=run.cfg.producer_version,
-                    payload=payload if isinstance(payload, Mapping) else {})
+                    payload=payload)
 
 
-def _publish(run: _Run, keyed: Sequence[Tuple[str, Envelope]], skipped: int) -> _Delivery:
+def _publish(run: PollRun, keyed: Sequence[Tuple[str, Envelope]], skipped: int) -> PollDelivery:
     batch = DeliveryBatch()
     ts = iso_to_epoch_ms(run.res.fetched_at or run.res.started_at)
     for key, env in keyed:
         run.sink.send(run.source.topic, key, env, batch, ts)
-    return _Delivery(batch, skipped)
+    return PollDelivery(batch, skipped)
 
 
-def _finish_delivered(run: _Run, read: FeedRead, delivery: _Delivery) -> PollOutcome:
+def _finish_delivered(run: PollRun, read: FeedRead, delivery: PollDelivery) -> PollOutcome:
     remaining = run.sink.flush(FLUSH_TIMEOUT_S)
     if delivery.batch.failed == 0 and remaining == 0:
         return _finish(run, OUTCOME_OK, read, delivery)
@@ -111,7 +101,7 @@ def _finish_delivered(run: _Run, read: FeedRead, delivery: _Delivery) -> PollOut
     return _finish(run, OUTCOME_KAFKA, read, delivery, err)
 
 
-def _finish(run: _Run, outcome: Outcome, read: Optional[FeedRead] = None, delivery: Optional[_Delivery] = None,
+def _finish(run: PollRun, outcome: Outcome, read: Optional[FeedRead] = None, delivery: Optional[PollDelivery] = None,
             error: Optional[str] = None) -> PollOutcome:
     """The poll's one exit: send the poll log and return the next state."""
     res, source = run.res, run.source

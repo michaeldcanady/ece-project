@@ -127,6 +127,8 @@ LAYER_MAP = {
     "citibike_producer.feed_read": "producer:jobs",
     "citibike_producer.unreadable_feed": "producer:jobs",
     "citibike_producer.poll_outcome": "producer:jobs",
+    "citibike_producer.poll_run": "producer:jobs",
+    "citibike_producer.poll_delivery": "producer:jobs",
     "citibike_producer.gbfs_feed": "producer:jobs",
     "citibike_producer.weather_feed": "producer:jobs",
     # DAGs
