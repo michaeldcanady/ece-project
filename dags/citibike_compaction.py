@@ -12,7 +12,7 @@ from airflow.decorators import dag, task
     tags=["citibike", "compaction"],
     **DAG_KWARGS,
 )
-def citibike_compaction():
+def citibike_compaction() -> None:
     @task
     def compact():
         from citibike_pipeline import lake, runtime

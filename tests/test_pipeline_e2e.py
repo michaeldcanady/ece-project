@@ -308,14 +308,15 @@ def batches_in_hour(storage, table=CURATED, hour=HOUR):
 
 
 def test_compaction_is_lossless_idempotent_and_verified(tmp_path, capture):
+    from citibike_pipeline.lake import CompactHour
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
     on_disk = len(curated_rows(storage))
     before = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
     n_batches = len(batches_in_hour(storage))
     res = CURATED.compact_hour(storage, HOUR)
-    assert res == {"sources": n_batches, "rows": before.num_rows} and n_batches > 1
-    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0                       # idempotent
+    assert res == CompactHour(sources=n_batches, rows=before.num_rows) and n_batches > 1
+    assert CURATED.compact_hour(storage, HOUR).sources == 0                       # idempotent
     after = CURATED.read_window(storage, HOUR, HOUR + timedelta(hours=1))
     assert sorted(after.to_pylist(), key=str) == sorted(before.to_pylist(), key=str)
     assert len(curated_rows(storage)) == on_disk                                      # nothing lost on disk
@@ -345,7 +346,7 @@ def test_read_window_is_lossless_when_compaction_runs_mid_read(tmp_path, capture
     storage.armed = True
     got = CURATED.read_window(storage, START, START + timedelta(hours=1), cols)
     assert not storage.armed                                            # compaction really ran mid-read
-    assert CURATED.compact_hour(storage, HOUR)["sources"] == 0          # ... and finished
+    assert CURATED.compact_hour(storage, HOUR).sources == 0          # ... and finished
     assert sorted(got.to_pylist(), key=str) == sorted(expected.to_pylist(), key=str)
 
 

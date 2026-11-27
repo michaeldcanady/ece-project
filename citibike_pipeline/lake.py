@@ -79,6 +79,12 @@ def _dedupe_identity(table: pa.Table) -> pa.Table:
 # ---- lake tables ----------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class CompactHour:
+    """The result of compacting one hour of a lake table: how many source files were merged, and how many rows remain"""
+    sources: int
+    rows: int
+
+@dataclass(frozen=True)
 class LakeTable:
     """Kafka-sourced rows split into hour partitions by event time (fetched_at); no two rows share a
     Kafka identity."""
@@ -142,13 +148,13 @@ class LakeTable:
 
     # -- compact --
 
-    def compact_hour(self, storage: Storage, hour: datetime) -> Dict[str, int]:
+    def compact_hour(self, storage: Storage, hour: datetime) -> CompactHour:
         """Merge an hour's batch files into compacted.parquet: idempotent, and verified before deleting."""
         keys = self._list_hour(storage, hour)
         target = self._key(hour, _COMPACTED)
         sources = [k for k in keys if k != target]
         if not sources:
-            return {"sources": 0, "rows": 0}
+            return CompactHour(sources=0, rows=0)
         table = _dedupe_identity(pa.concat_tables([read_parquet(storage, k) for k in keys]))
         table = table.sort_by([(c, "ascending") for c in _SORT_BY])
         put_parquet(storage, target, table)          # written before anything is deleted (see _read_hour)
@@ -158,7 +164,7 @@ class LakeTable:
                                % (target, written, table.num_rows))
         for k in sources:
             storage.delete(k)
-        return {"sources": len(sources), "rows": table.num_rows}
+        return CompactHour(sources=len(sources), rows=table.num_rows)
 
     def hours(self, storage: Storage) -> List[datetime]:
         """Every hour partition holding at least one file."""
@@ -213,7 +219,7 @@ LAKE_TABLES = (RAW_STATUS, RAW_WEATHER, RAW_POLL_LOG, CURATED_STATUS, CURATED_WE
 RAW_BY_EVENT_TYPE = {"station_status": RAW_STATUS, "weather_current": RAW_WEATHER, "poll_log": RAW_POLL_LOG}
 
 
-def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int = 2) -> Dict[str, Dict[str, int]]:
+def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int = 2) -> Dict[str, CompactHour]:
     """Compact every lake table's hours that ended at least `lag_hours` ago.
 
     The lag keeps compaction away from the hours the micro-batch is still writing; it is not what makes
@@ -223,14 +229,17 @@ def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)      # hour partitions are UTC
     cutoff = now - timedelta(hours=lag_hours)
-    result: Dict[str, Dict[str, int]] = {}
+    # TODO: convert from a dict to a dataclass
+    result: Dict[str, CompactHour] = {}
+    # TODO: add compact_due method to LakeTable, so that the DAG can call it directly instead of
+    # iterating over LAKE_TABLES
     for table in LAKE_TABLES:
         for hour in table.hours(storage):
             if hour + timedelta(hours=1) > cutoff:
                 continue
             res = table.compact_hour(storage, hour)
-            if res["sources"]:
+            if res.sources:
                 name = partition_path(table.prefix, hour)
                 result[name] = res
-                log.info("compacted %s: %d files -> %d rows", name, res["sources"], res["rows"])
+                log.info("compacted %s: %d files -> %d rows", name, res.sources, res.rows)
     return result
