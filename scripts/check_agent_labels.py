@@ -21,6 +21,7 @@ from typing import FrozenSet, Iterator, List, Pattern, Sequence, Tuple
 
 SETUP_SH = ".sandcastle/setup.sh"
 SPEC_FORMAT = ".sandcastle/shared/spec-format.md"
+LABELS_TS = ".sandcastle/shared/labels.ts"
 # file -> the pattern that finds the heading it requires
 HEADING_USERS: Tuple[Tuple[str, Pattern[str]], ...] = (
     (".sandcastle/spec/spec-plan.ts", re.compile(r'\.includes\("(##[^"]+)"\)')),
@@ -29,6 +30,8 @@ HEADING_USERS: Tuple[Tuple[str, Pattern[str]], ...] = (
 
 LABEL = re.compile(r"\b(?:agent:[a-z-]+|strength:[a-z]+|door:[a-z-]+|priority:[a-z]+)")
 CREATED = re.compile(r'"((?:agent|strength|door|priority):[a-z-]+|request)\|[^|"]*\|[0-9a-fA-F]{6}"')
+LABEL_CONSTANT = re.compile(r'^export const \w+_LABEL = "([^"]+)";', re.MULTILINE)
+CREATED_NAME = re.compile(r'"([^"|]+)\|[^|"]*\|[0-9a-fA-F]{6}"')
 FORMAT_HEADING = re.compile(r"`(##[^`]+)`")
 
 
@@ -95,9 +98,20 @@ def _heading_findings(root: Path) -> List[Finding]:
     return findings
 
 
+def _constant_findings(root: Path) -> List[Finding]:
+    """Every label constant in `labels.ts` must be created by `setup.sh`: the bare `request` label has no prefix the
+    usage scan could match, so this is the check that covers it."""
+    created = frozenset(CREATED_NAME.findall(_read(root, SETUP_SH)))
+    return [
+        Finding(LABELS_TS, "label %s is declared but %s does not create it" % (name, SETUP_SH))
+        for name in LABEL_CONSTANT.findall(_read(root, LABELS_TS))
+        if name not in created
+    ]
+
+
 def check(root: Path) -> Sequence[Finding]:
     """Every label used but not created, and every required spec heading the format does not define."""
-    return _label_findings(root) + _heading_findings(root)
+    return _label_findings(root) + _constant_findings(root) + _heading_findings(root)
 
 
 def main(root: Path = Path(".")) -> int:

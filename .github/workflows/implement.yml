@@ -85,7 +85,8 @@ jobs:
         run: |
           set -euo pipefail
           # `agent:recovered` stays: it records that the recovery run is the one now running.
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent:implement || true
+          # Not `|| true`: a label that stays would re-queue the issue on every drain. A failure here goes to recovery.
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent:implement
           gh issue edit "$ISSUE_NUMBER" --remove-label agent:blocked || true
           existing=$(gh pr list --state open --json url,headRefName \
             --jq "[.[] | select(.headRefName == \"$BRANCH\")] | .[0].url // empty")
@@ -137,6 +138,8 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENT_PAT }}
         run: |
           set -euo pipefail
+          # The push URL carries the PAT, and git may echo it; the reason is posted as a public comment.
+          redact() { sed "s#${AGENT_PAT}#***#g"; }
           # Read the title here, not from the event: the run picked this issue, the event may name another.
           ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq .title)
           # Carry main's current workflow files: a PAT without `workflow` scope cannot push a branch whose
@@ -148,8 +151,8 @@ jobs:
             exit 1
           fi
           if ! git push "https://x-access-token:${AGENT_PAT}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}" 2> "$OUT/push_err.txt"; then
-            { echo "The push was rejected:"; cat "$OUT/push_err.txt"; } > "$OUT/failure_reason.txt"
-            cat "$OUT/push_err.txt"
+            { echo "The push was rejected:"; redact < "$OUT/push_err.txt"; } > "$OUT/failure_reason.txt"
+            redact < "$OUT/push_err.txt"
             exit 1
           fi
           gh pr create --base main --head "$BRANCH" --title "$ISSUE_TITLE" --body-file "$OUT/pr_body.md"
@@ -160,39 +163,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress --add-label agent:pr-open
+          # A recovery that worked: keep a mark for the weekly report, and give a later re-run a fresh attempt.
+          if gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | index("agent:recovered") != null' | grep -q true; then
+            gh issue edit "$ISSUE_NUMBER" --remove-label agent:recovered --add-label agent:recovered-ok
+          fi
 
       # Any failed, cancelled or timed-out step after the preflight, not only the agent: a rejected push must not leave
       # the issue in progress. The first failure gets a recovery run; the second blocks the issue.
-      - if: (failure() || cancelled()) && steps.preflight.outputs.go == 'true'
+      # Gated on the pick, not the preflight: a preflight that crashes has already taken `agent:implement` off the issue.
+      - if: (failure() || cancelled()) && steps.pick.outputs.go == 'true'
         name: Recover or block the issue
         env:
           GH_TOKEN: ${{ secrets.AGENT_PAT }}
-        run: |
-          reason="$OUT/failure_reason.txt"
-          mkdir -p "$OUT"
-          [ -s "$reason" ] || echo "The run ended before it could say why (failed, cancelled or timed out). See the workflow log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID" > "$reason"
-          recovered=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | index("agent:recovered") != null')
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent:in-progress || true
-          if [ "$recovered" = "true" ]; then
-            gh issue edit "$ISSUE_NUMBER" --add-label agent:blocked
-            summary='The agent could not finish this issue on its recovery run either, so no PR was opened. The issue is blocked.'
-          else
-            summary='The agent could not finish this issue, so no PR was opened. It runs once more, reading this comment.'
-          fi
-          { echo "$summary"; echo; echo '```'; cat "$reason"; echo '```'; } > "$OUT/comment.md"
-          gh issue comment "$ISSUE_NUMBER" --body-file "$OUT/comment.md"
-          if [ "$recovered" != "true" ]; then
-            gh issue edit "$ISSUE_NUMBER" --add-label agent:recovered
-            # Last, so the comment is in place when the next run reads the issue.
-            gh issue edit "$ISSUE_NUMBER" --add-label agent:implement
-          fi
+          AGENT_PAT: ${{ secrets.AGENT_PAT }}
+          REASON_FILE: ${{ runner.temp }}/out/failure_reason.txt
+        run: npx --prefix .sandcastle tsx .sandcastle/implement/recover.ts
 
   # Drain the queue: runs are serialized, so start the next one while issues remain. A separate job, so the agent job
   # does not hold `actions: write`. Gated on the pick: a run that failed before it (checkout, install) would
   # otherwise dispatch itself forever.
   next:
     needs: implement
-    if: always() && needs.implement.outputs.picked == 'success'
+    # A timed-out or cancelled job may report no outputs, so a cancelled run counts as picked.
+    if: always() && (needs.implement.outputs.picked == 'success' || needs.implement.result == 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

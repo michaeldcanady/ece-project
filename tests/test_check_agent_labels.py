@@ -18,7 +18,8 @@ SETUP_SH = """\
     "agent:candidate|Filed by the nightly run|0e8a16" \\
     "agent:implement|Add to start the implement workflow|1d76db" \\
     "strength:strong|Candidate strength: strong|5319e7" \\
-    "priority:high|Jump the implement queue|b60205"; do
+    "priority:high|Jump the implement queue|b60205" \\
+    "request|Filed from the template|0075ca"; do
     IFS='|' read -r name desc color <<<"$spec"
   done
 """
@@ -66,6 +67,12 @@ def test_a_priority_label_must_be_created_like_an_agent_label(tmp_path: Path):
     files = {".github/workflows/implement.yml": IMPLEMENT + "# priority:high agent:recovered\n"}
     findings = _check(tmp_path, files)
     assert [f.message.split()[1] for f in findings] == ["agent:recovered"]
+
+
+def test_a_label_constant_that_setup_sh_does_not_create_gives_a_finding(tmp_path: Path):
+    labels_ts = 'export const REQUEST_LABEL = "request";\nexport const GHOST_LABEL = "ghost";\n'
+    findings = _check(tmp_path, {".sandcastle/shared/labels.ts": labels_ts})
+    assert [f.message.split()[1] for f in findings] == ["ghost"]
 
 
 def test_labels_under_node_modules_are_skipped(tmp_path: Path):

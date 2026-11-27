@@ -1,12 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STRENGTHS } from "../shared/candidate-labels";
-import { autoImplement, recoveryAction } from "./spec-labels";
-
-test("recoveryAction retries an issue that has not been recovered and gives up on one that has", () => {
-  assert.equal(recoveryAction(["agent:spec"]), "retry");
-  assert.equal(recoveryAction(["agent:spec", "agent:recovered"]), "give-up");
-});
+import { autoImplement } from "./spec-labels";
 
 test("autoImplement is true only for a strong request", () => {
   assert.equal(autoImplement(["request"], "strong", "OWNER"), true);

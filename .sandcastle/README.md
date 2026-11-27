@@ -19,10 +19,12 @@ Python project; `mise run typecheck:agent` checks it and runs as part of `mise r
    implements the spec, runs `mise run check`, runs a review pass, runs the check again, then opens a PR that
    closes the issue. Reviewing the PR is the human gate; nothing auto-merges.
 4. Each job gets one attempt and one recovery attempt. A failure, cancellation or timeout of the first attempt
-   labels the issue `agent:recovered`, comments the reason and puts it back in the queue; the recovery run reads
-   that comment. A second failure leaves the issue labeled `agent:blocked`, with the reason as a comment, and no PR
-   opens. To retry a blocked issue, remove `agent:blocked` and `agent:recovered`, then add `agent:implement`. The
-   spec job follows the same rule with `agent:spec`.
+   comments the reason, then labels the issue `agent:recovered` and puts it back in the queue in one call; the
+   recovery run reads that comment. A recovery that opens a PR swaps `agent:recovered` for `agent:recovered-ok`, which
+   the weekly report counts and which gives a later re-run a fresh attempt. A second failure leaves the issue labeled `agent:blocked`, with the reason as a comment, and no PR
+   opens. To retry a blocked implement issue, remove `agent:blocked` and `agent:recovered`, then add
+   `agent:implement`. The spec job follows the same rule, but its give-up clears `agent:recovered` itself, so a human
+   only re-adds `agent:spec`.
 5. `.github/workflows/report.yml` posts a weekly report on the Factory (requests against scan candidates, PR
    outcomes, blocked issues, recovery and one-way-door shares) to the issue titled "Factory weekly report".
 

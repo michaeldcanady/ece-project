@@ -1,12 +1,5 @@
 import type { Strength } from "../shared/candidate-labels";
-import { IMPLEMENT_LABEL, RECOVERED_LABEL, REQUEST_LABEL } from "../shared/labels";
-
-/** What a failed spec run does next: spend the one retry, or stop and leave the issue unchanged. */
-export type Recovery = "retry" | "give-up";
-
-/** Pure. A spec run gets one attempt plus one recovery, so only an issue not yet marked recovered is retried. */
-export const recoveryAction = (labels: readonly string[]): Recovery =>
-  labels.includes(RECOVERED_LABEL) ? "give-up" : "retry";
+import { IMPLEMENT_LABEL, REQUEST_LABEL } from "../shared/labels";
 
 /** Who may file a request that starts an agent run unattended: the repository's own people, not any commenter. */
 const TRUSTED_AUTHORS: readonly string[] = ["OWNER", "MEMBER", "COLLABORATOR"];

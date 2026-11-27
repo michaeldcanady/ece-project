@@ -10,6 +10,8 @@ export const SPEC_LABEL = "agent:spec";
 export const IMPLEMENT_LABEL = "agent:implement";
 /** The issue's one recovery attempt has been used. */
 export const RECOVERED_LABEL = "agent:recovered";
+/** The recovery attempt succeeded and opened a PR; kept so the weekly report can count recoveries. */
+export const RECOVERED_OK_LABEL = "agent:recovered-ok";
 export const BLOCKED_LABEL = "agent:blocked";
 export const DOOR_ONE_WAY_LABEL = "door:one-way";
 export const DOOR_TWO_WAY_LABEL = "door:two-way";

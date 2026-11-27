@@ -1,5 +1,5 @@
 /** Turns fetched issues and PRs into the weekly Factory report. Pure: fetch.ts does the reading. */
-import { BLOCKED_LABEL, DOOR_ONE_WAY_LABEL, DOOR_TWO_WAY_LABEL, RECOVERED_LABEL, REQUEST_LABEL } from "../shared/labels";
+import { BLOCKED_LABEL, DOOR_ONE_WAY_LABEL, DOOR_TWO_WAY_LABEL, RECOVERED_LABEL, RECOVERED_OK_LABEL, REQUEST_LABEL } from "../shared/labels";
 import { CANDIDATE_LABEL } from "../shared/candidate-labels";
 
 export interface Issue {
@@ -45,9 +45,11 @@ export interface RecoveryCounts {
  */
 export const recovery = (issues: readonly Issue[], prs: readonly Pr[], since: Date): RecoveryCounts => {
   const withPr = new Set(prs.filter((p) => p.state !== "CLOSED").flatMap((p) => factoryIssue(p) ?? []));
-  const recovered = issues.filter((i) => i.labels.includes(RECOVERED_LABEL) && within(i.updatedAt, since));
-  const withPrCount = recovered.filter((i) => withPr.has(i.number)).length;
-  const blocked = recovered.filter((i) => !withPr.has(i.number) && i.labels.includes(BLOCKED_LABEL)).length;
+  const recovered = issues.filter(
+    (i) => (i.labels.includes(RECOVERED_LABEL) || i.labels.includes(RECOVERED_OK_LABEL)) && within(i.updatedAt, since),
+  );
+  const withPrCount = recovered.filter((i) => withPr.has(i.number) || i.labels.includes(RECOVERED_OK_LABEL)).length;
+  const blocked = recovered.filter((i) => !withPr.has(i.number) && !i.labels.includes(RECOVERED_OK_LABEL) && i.labels.includes(BLOCKED_LABEL)).length;
   return { withPr: withPrCount, blocked, other: recovered.length - withPrCount - blocked };
 };
 

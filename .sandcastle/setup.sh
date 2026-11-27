@@ -252,6 +252,7 @@ if confirm "Create the agent:*, strength:*, door:* and priority:* labels, and re
     "agent:pr-open|The implement workflow opened a PR for this issue|0e8a16" \
     "agent:blocked|The implement workflow could not finish|d93f0b" \
     "agent:recovered|The one recovery attempt for this issue has been used|fef2c0" \
+    "agent:recovered-ok|The recovery attempt succeeded|c2e0c6" \
     "request|Filed by a human from the issue template; outranks the nightly scan|0075ca" \
     "priority:high|Jump the implement queue|b60205" \
     "strength:strong|Candidate strength: strong|5319e7" \

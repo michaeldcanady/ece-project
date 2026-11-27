@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { recoveryAction } from "./spec-labels";
+import { recoveryAction } from "../shared/recovery";
 import { gh } from "../shared/gh";
 import { RECOVERED_LABEL, SPEC_LABEL } from "../shared/labels";
 import { required } from "../shared/common";
