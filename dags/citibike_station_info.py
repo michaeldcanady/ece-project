@@ -16,7 +16,7 @@ from airflow.decorators import dag, task
 def citibike_station_info():
     @task
     def poll(**context):
-        return run_poll("station_information", context)
+        return run_poll("station_information", context["ti"])
 
     @task(trigger_rule="all_done")
     def build_dim():

@@ -1,8 +1,6 @@
 """Fail on weak types in annotations: `Any`, `typing.Dict` and the builtin `dict`.
 
-The rule and what to use instead are in CODING_STANDARDS.md ("Strong types"). Files written before the rule
-are listed in BASELINE with the number of weak annotations they had; a file may only go down from there.
-When you remove some, lower its count here (the check tells you to), so the gain cannot be spent again.
+The rule and what to use instead are in CODING_STANDARDS.md ("Strong types").
 
 Usage: python scripts/check_strong_types.py   (run by `mise run lint`)
 """
@@ -11,26 +9,13 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple, Union
 
 ROOTS = ("citibike_contract", "citibike_pipeline", "citibike_producer", "dags", "scripts", "tests")
 WEAK = frozenset({"Any", "Dict", "dict"})
 
-# path -> weak annotations allowed (the count when the rule was added). Only ever lower these.
-BASELINE = {
-    "citibike_producer/broker.py": 4,
-    "citibike_producer/create_topics.py": 4,
-    "citibike_producer/jobs.py": 4,
-    "citibike_producer/sink.py": 5,
-    "citibike_producer/sources.py": 12,
-    "citibike_producer/synthetic.py": 7,
-    "citibike_producer/task.py": 2,
-    "citibike_producer/tasks.py": 6,
-    "dags/_common.py": 2,
-}
 
-
-def _weak_names(annotation: Optional[ast.expr]) -> Iterator[ast.AST]:
+def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Union[ast.Name, ast.Attribute]]:
     if annotation is None:
         return
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):   # quoted annotation
@@ -82,17 +67,11 @@ def main() -> int:
     failed = False
     for path in sorted(python_files(root)):
         found = violations(os.path.join(root, path))
-        allowed = BASELINE.get(path, 0)
-        if len(found) > allowed:
+        if found:
             failed = True
-            print("%s: %d weak annotation(s), %d allowed (see CODING_STANDARDS.md, Strong types)"
-                  % (path, len(found), allowed))
+            print("%s: %d weak annotation(s) (see CODING_STANDARDS.md, Strong types)" % (path, len(found)))
             for line, name in found:
                 print("  %s:%d: %s" % (path, line, name))
-        elif len(found) < allowed:
-            failed = True
-            print("%s: %d weak annotation(s), baseline says %d: lower BASELINE in %s to %d"
-                  % (path, len(found), allowed, os.path.relpath(__file__, root), len(found)))
     return 1 if failed else 0
 
 

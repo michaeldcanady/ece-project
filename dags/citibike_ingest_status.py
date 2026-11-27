@@ -27,7 +27,7 @@ class Job(Enum):
 def citibike_ingest_status():
     @task
     def poll(**context):
-        return run_poll(Job.STATION_STATUS.value, context)
+        return run_poll(Job.STATION_STATUS.value, context["ti"])
 
     poll()
 

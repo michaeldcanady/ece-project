@@ -11,9 +11,9 @@ import argparse
 import os
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Callable, List, MutableMapping, Optional, Sequence
 
-from citibike_contract import iso
+from citibike_contract import JsonObject, iso
 
 from .config import TOPIC_INFO, TOPIC_STATUS, Config
 from .jobs import GbfsStationJob, WeatherJob
@@ -30,16 +30,17 @@ class _NullProducer:
     """Accepts messages; fires delivery callbacks on flush like a healthy broker."""
 
     def __init__(self) -> None:
-        self._cbs: List[Any] = []
+        self._cbs: List[Callable[[object, object], None]] = []
 
-    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=None):
+    def produce(self, topic: str, key: bytes = b"", value: bytes = b"",
+                on_delivery: Optional[Callable[[object, object], None]] = None, timestamp: int = 0) -> None:
         if on_delivery:
             self._cbs.append(on_delivery)
 
-    def poll(self, t=0):
+    def poll(self, timeout: float = 0) -> int:
         return 0
 
-    def flush(self, t=0):
+    def flush(self, timeout: float = 0) -> int:
         for cb in self._cbs:
             cb(None, None)
         self._cbs = []
@@ -68,8 +69,8 @@ class _Sim:
             self.bikes[0] = max(0, self.bikes[0] - 1)
             self.bikes[1] = min(self.cap[1], self.bikes[1] + 1)
 
-    def stations(self, t: datetime, t0: datetime) -> List[Dict[str, Any]]:
-        out = []
+    def stations(self, t: datetime, t0: datetime) -> Sequence[JsonObject]:
+        out: List[MutableMapping[str, object]] = []
         for i in range(self.n):
             b, c = self.bikes[i], self.cap[i]
             out.append({
@@ -83,7 +84,7 @@ class _Sim:
                     "is_installed": 1, "is_renting": 1, "is_returning": 1, "last_reported": int(t.timestamp())})
         return out
 
-    def info(self) -> List[Dict[str, Any]]:
+    def info(self) -> Sequence[JsonObject]:
         return [{"station_id": self.sid(i), "name": "Synthetic St %d" % i, "short_name": "S%d" % i,
                  "lat": 40.70 + i * 0.001, "lon": -74.00 + i * 0.001, "capacity": self.cap[i], "region_id": "71"}
                 for i in range(self.n)]
@@ -133,7 +134,7 @@ def generate(path: str, stations: int = 40, minutes: int = 45, start: Optional[d
         "last_updated": int(t.timestamp()), "ttl": 60, "version": "2.3",
         "data": {"stations": sim.info()}}), reg, "station_information", "station_information", TOPIC_INFO)
 
-    def weather_body(t: datetime) -> Dict[str, Any]:
+    def weather_body(t: datetime) -> JsonObject:
         obs = int(t.timestamp()) // 900 * 900
         return {"latitude": 40.75, "longitude": -73.98, "current_units": {"temperature_2m": "°C"},
                 "current": {"time": obs, "interval": 900, "temperature_2m": 12.0 + (obs // 900 % 8) * 0.5,

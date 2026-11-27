@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Mapping, MutableMapping, Optional, Union
 
 import requests
 
@@ -15,13 +15,19 @@ from citibike_contract import (
     OUTCOME_OK,
     OUTCOME_PARSE,
     OUTCOME_TIMEOUT,
+    JsonObject,
     Outcome,
     utc_now_iso,
 )
 
 from .config import Config
+from .discovery_state import DiscoveryState
+from .jsonvalues import mapping_or_empty, optional_str
 
 log = logging.getLogger(__name__)
+
+QueryParams = Mapping[str, Union[str, float]]
+
 
 @dataclass
 class FetchResult:
@@ -31,7 +37,7 @@ class FetchResult:
     fetched_at: Optional[str] = None
     http_status: Optional[int] = None
     latency_ms: Optional[int] = None
-    body: Optional[Dict[str, Any]] = None
+    body: Optional[JsonObject] = None
     error: Optional[str] = None
 
     @property
@@ -45,7 +51,7 @@ class HttpClient:
         self._session = session or requests.Session()
         self._session.headers.update({"User-Agent": cfg.user_agent, "Accept": "application/json"})
 
-    def get_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> FetchResult:
+    def get_json(self, url: str, params: Optional[QueryParams] = None) -> FetchResult:
         started_at = utc_now_iso()
         t0 = time.monotonic()
         try:
@@ -77,7 +83,7 @@ class FeedRegistry:
         self._cfg = cfg
         self._client = client
         self._lock = threading.Lock()
-        self._urls: Dict[str, str] = {}
+        self._urls: Mapping[str, str] = {}
         self._version: Optional[str] = None
         self._loaded_at = 0.0
 
@@ -94,18 +100,18 @@ class FeedRegistry:
         with self._lock:
             return self._urls.get(feed_name)
 
-    def state(self) -> Dict[str, Any]:
+    def state(self) -> DiscoveryState:
         """The cached discovery result, so the next task run can skip re-fetching gbfs.json."""
         with self._lock:
-            return {"urls": dict(self._urls), "version": self._version, "loaded_at": self._loaded_at}
+            return DiscoveryState(urls=dict(self._urls), version=self._version, loaded_at=self._loaded_at)
 
-    def restore(self, state: Optional[Dict[str, Any]]) -> None:
-        if not state or not state.get("urls"):
+    def restore(self, state: Optional[DiscoveryState]) -> None:
+        if state is None or not state.urls:
             return
         with self._lock:
-            self._urls = dict(state["urls"])
-            self._version = state.get("version")
-            self._loaded_at = float(state.get("loaded_at") or 0.0)
+            self._urls = dict(state.urls)
+            self._version = state.version
+            self._loaded_at = state.loaded_at
 
     def invalidate(self) -> None:
         """Force rediscovery on next use (e.g. after a 404 on a feed URL)."""
@@ -117,23 +123,28 @@ class FeedRegistry:
         if not res.ok:
             log.warning("GBFS discovery failed: %s %s", res.outcome, res.error)
             return False
-        urls = parse_discovery(res.body, self._cfg.gbfs_language)
+        body = res.body or {}
+        urls = parse_discovery(body, self._cfg.gbfs_language)
         if not urls:
             log.warning("GBFS discovery returned no feeds")
             return False
         with self._lock:
             self._urls = urls
-            self._version = res.body.get("version")
+            self._version = optional_str(body.get("version"))
             self._loaded_at = time.time()
         log.info("GBFS discovery ok: version=%s feeds=%s", self._version, sorted(urls))
         return True
 
 
-def parse_discovery(body: Dict[str, Any], language: str) -> Dict[str, str]:
-    data = body.get("data") or {}
+def parse_discovery(body: JsonObject, language: str) -> Mapping[str, str]:
+    data = mapping_or_empty(body.get("data"))
     lang = data.get(language) or (next(iter(data.values())) if data else None)
-    feeds = (lang or {}).get("feeds") or []
-    return {f["name"]: f["url"] for f in feeds if "name" in f and "url" in f}
+    feeds = mapping_or_empty(lang).get("feeds")
+    urls: MutableMapping[str, str] = {}
+    for feed in feeds if isinstance(feeds, list) else []:
+        if isinstance(feed, Mapping) and "name" in feed and "url" in feed:
+            urls[str(feed["name"])] = str(feed["url"])
+    return urls
 
 
 WEATHER_VARIABLES = (
@@ -143,7 +154,7 @@ WEATHER_VARIABLES = (
 
 
 def fetch_weather(cfg: Config, client: HttpClient) -> FetchResult:
-    params = {
+    params: QueryParams = {
         "latitude": cfg.weather_lat,
         "longitude": cfg.weather_lon,
         "current": WEATHER_VARIABLES,

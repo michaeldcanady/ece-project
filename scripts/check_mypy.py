@@ -34,9 +34,9 @@ BASELINE: Mapping[str, int] = {
     "citibike_pipeline/station_info.py": 0,
     "citibike_pipeline/status.py": 3,
     "citibike_producer/jobs.py": 21,
-    "citibike_producer/sources.py": 2,
+    "citibike_producer/sources.py": 0,
     "citibike_producer/synthetic.py": 6,
-    "scripts/check_strong_types.py": 1,
+    "scripts/check_strong_types.py": 0,
 }
 
 FATAL_STATUS = 2

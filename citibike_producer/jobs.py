@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Mapping, Optional
 
 from citibike_contract import (
     OUTCOME_DISCOVERY,
@@ -32,6 +32,8 @@ from citibike_contract import (
 )
 
 from .config import TOPIC_POLL_LOG, TOPIC_WEATHER, Config
+from .job_state import JobState
+from .jsonvalues import optional_int
 from .sink import DeliveryBatch, KafkaSink
 from .sources import (
     FeedRegistry,
@@ -39,6 +41,7 @@ from .sources import (
     HttpClient,
     fetch_weather,
 )
+from .station_feed import StationFeed
 
 log = logging.getLogger(__name__)
 
@@ -56,13 +59,13 @@ class Job:
         self.last_error: Optional[str] = None
         self._last_feed_updated: Optional[int] = None
 
-    def state(self) -> Dict[str, Any]:
-        return {"last_feed_updated": self._last_feed_updated, "consecutive_failures": self.consecutive_failures}
+    def state(self) -> JobState:
+        return JobState(last_feed_updated=self._last_feed_updated, consecutive_failures=self.consecutive_failures)
 
-    def restore(self, state: Optional[Dict[str, Any]]) -> None:
-        state = state or {}
-        self._last_feed_updated = state.get("last_feed_updated")
-        self.consecutive_failures = int(state.get("consecutive_failures") or 0)
+    def restore(self, state: Optional[JobState]) -> None:
+        state = state or JobState()
+        self._last_feed_updated = state.last_feed_updated
+        self.consecutive_failures = state.consecutive_failures
 
     def run_once(self) -> bool:  # pragma: no cover - interface
         raise NotImplementedError
@@ -120,15 +123,14 @@ class GbfsStationJob(Job):
                 self.registry.invalidate()   # feed URL may have moved; rediscover next time
             return self._finish(poll_id, SOURCE_GBFS, url, res, res.outcome, error=res.error)
 
-        body = res.body or {}
-        stations = (body.get("data") or {}).get("stations")
-        if not isinstance(stations, list):
+        feed = StationFeed.parse(res.body or {})
+        if feed is None:
             return self._finish(poll_id, SOURCE_GBFS, url, res, OUTCOME_PARSE, error="data.stations missing")
 
-        last_updated = body.get("last_updated")
-        ttl = body.get("ttl")
-        version = body.get("version") or self.registry.version
-        common = dict(gbfs_version=version, feed_last_updated=last_updated, feed_ttl=ttl, n_records=len(stations))
+        last_updated = feed.last_updated
+        version = feed.version or self.registry.version
+        common = dict(gbfs_version=version, feed_last_updated=last_updated, feed_ttl=feed.ttl,
+                      n_records=len(feed.stations))
 
         if (self.cfg.skip_unchanged_feed and last_updated is not None
                 and last_updated == self._last_feed_updated):
@@ -138,7 +140,11 @@ class GbfsStationJob(Job):
         ts = iso_to_epoch_ms(res.fetched_at)
         fetched_at = parse_iso(res.fetched_at)
         skipped = 0
-        for st in stations:
+        for st in feed.stations:
+            if not isinstance(st, Mapping):
+                log.warning("%s: skipping a station item that is not an object", self.name)
+                skipped += 1
+                continue
             env = Envelope(event_type=self.event_type, poll_id=poll_id, source=SOURCE_GBFS, source_url=url,
                            gbfs_version=version, feed_last_updated=last_updated, fetched_at=fetched_at,
                            producer_version=self.cfg.producer_version, payload=st)
@@ -173,11 +179,11 @@ class WeatherJob(Job):
             return self._finish(poll_id, SOURCE_WEATHER, res.url, res, res.outcome, error=res.error)
         body = res.body or {}
         current = body.get("current")
-        if not isinstance(current, dict) or "time" not in current:
+        if not isinstance(current, Mapping) or "time" not in current:
             return self._finish(poll_id, SOURCE_WEATHER, res.url, res, OUTCOME_PARSE, error="current block missing")
 
-        obs_time = current.get("time")   # epoch seconds (timeformat=unixtime)
-        common = dict(feed_last_updated=obs_time, feed_ttl=current.get("interval"), n_records=1)
+        obs_time = optional_int(current.get("time"))   # epoch seconds (timeformat=unixtime)
+        common = dict(feed_last_updated=obs_time, feed_ttl=optional_int(current.get("interval")), n_records=1)
         if self.cfg.skip_unchanged_feed and obs_time == self._last_feed_updated:
             return self._finish(poll_id, SOURCE_WEATHER, res.url, res, OUTCOME_SKIPPED, **common)
 

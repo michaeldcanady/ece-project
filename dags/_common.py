@@ -2,9 +2,11 @@
 file can never fail because of a pipeline dependency."""
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
+from typing import Mapping, Optional
 
 import pendulum
+
+from citibike_producer.task_instance_like import TaskInstanceLike
 
 # Every DAG runs unattended, one run at a time, with no backfill after downtime.
 DAG_KWARGS = {
@@ -15,7 +17,7 @@ DAG_KWARGS = {
 }
 
 
-def default_args(retries: int, retry_delay: timedelta, execution_timeout: timedelta) -> dict:
+def default_args(retries: int, retry_delay: timedelta, execution_timeout: timedelta) -> Mapping[str, object]:
     return {"owner": "airflow", "retries": retries, "retry_delay": retry_delay,
             "execution_timeout": execution_timeout}
 
@@ -26,20 +28,18 @@ STATE_KEY = "producer_state"
 class Outcome:
     outcome: Optional[str] = None
 
-# TODO: stronger typing and dataclasses for the context, so that the producer can be more easily tested in isolation.
-# TODO: stub airflow context for testing.
-def run_poll(job: str, context: dict) -> Outcome:
+def run_poll(job: str, ti: TaskInstanceLike) -> Outcome:
     """Poll one source once, carrying the producer's state between runs in XCom.
 
     The state is saved before a failed poll fails the task, so the failure count and the
     discovered feed URLs survive into the next run. The failure itself is already in poll_log.
     """
+    from citibike_producer.poll_state import PollState
     from citibike_producer.tasks import poll_once
 
-    ti = context["ti"]
     prior = ti.xcom_pull(task_ids=ti.task_id, key=STATE_KEY, include_prior_dates=True)
-    result = poll_once(job, prior)
-    ti.xcom_push(key=STATE_KEY, value=result.state)
+    result = poll_once(job, PollState.from_json(prior))
+    ti.xcom_push(key=STATE_KEY, value=result.state.to_json())
     if not result.ok:
         raise RuntimeError("%s poll failed: %s (%s)" % (job, result.outcome, result.error))
     return Outcome(outcome=result.outcome)

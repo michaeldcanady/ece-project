@@ -6,7 +6,9 @@ from typing import Protocol
 
 from citibike_contract import Envelope, encode, parse_iso
 from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
+from citibike_producer.job_state import JobState
 from citibike_producer.jobs import GbfsStationJob, WeatherJob
+from citibike_producer.poll_state import PollState
 from citibike_producer.replay import replay
 from citibike_producer.sink import KafkaSink
 from citibike_producer.sources import FetchResult, parse_discovery
@@ -238,8 +240,8 @@ def test_poll_once_carries_state_between_runs():
     first = poll_once("station_status", None, Config(), producer=prod,
                       client=FakeClient([ok_result(DISCOVERY_BODY), ok_result(STATUS_BODY)]))
     assert first.ok and first.outcome == "ok"
-    assert first.state["job"]["last_feed_updated"] == 1760000100
-    assert first.state["discovery"]["urls"]["station_status"].endswith("station_status.json")
+    assert first.state.job.last_feed_updated == 1760000100
+    assert first.state.discovery.urls["station_status"].endswith("station_status.json")
     # second run: no discovery fetch (the client has only the status response), unchanged feed skipped
     second = poll_once("station_status", first.state, Config(), producer=prod,
                        client=FakeClient([ok_result(STATUS_BODY)]))
@@ -249,11 +251,11 @@ def test_poll_once_carries_state_between_runs():
 
 def test_poll_once_reports_failure_and_counts_it_in_state():
     bad = FetchResult("timeout", "u", "2026-10-20T14:00:00.000+00:00", error="read timeout")
-    state = {"job": {"consecutive_failures": 2}}
+    state = PollState(job=JobState(consecutive_failures=2))
     prod = FakeProducer()
     res = poll_once("weather", state, Config(), producer=prod, client=FakeClient([bad]))
     assert not res.ok and res.outcome == "timeout" and res.error == "read timeout"
-    assert res.state["job"]["consecutive_failures"] == 3
+    assert res.state.job.consecutive_failures == 3
     assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["consecutive_failures"] == 3
 
 
@@ -403,3 +405,20 @@ def test_a_weather_poll_without_a_location_id_sends_nothing_and_is_a_parse_error
     assert by_topic(prod, TOPIC_WEATHER) == []
     poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]
     assert poll["outcome"] == "parse_error" and "location_id" in poll["error"]
+
+
+def test_poll_state_survives_json_and_reads_the_shape_already_in_xcom():
+    from citibike_producer.discovery_state import DiscoveryState
+    state = PollState(job=JobState(last_feed_updated=1760000100, consecutive_failures=2),
+                      discovery=DiscoveryState(urls={"station_status": "https://a/s"}, version="2.3", loaded_at=12.5))
+    assert PollState.from_json(json.loads(json.dumps(state.to_json()))) == state
+    legacy = {"job": {"last_feed_updated": 5, "consecutive_failures": 1},
+              "discovery": {"urls": {"x": "https://a/x"}, "version": None, "loaded_at": 3}}
+    assert PollState.from_json(legacy).discovery == DiscoveryState({"x": "https://a/x"}, None, 3.0)
+    assert PollState(job=JobState(), discovery=None).to_json() == {"job": {"last_feed_updated": None,
+                                                                          "consecutive_failures": 0}}
+
+
+def test_missing_or_malformed_poll_state_starts_fresh():
+    for bad in (None, [], "x", {"job": 7, "discovery": {"urls": {}}}, {"job": {"consecutive_failures": "n"}}):
+        assert PollState.from_json(bad) == PollState()
