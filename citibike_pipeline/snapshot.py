@@ -17,7 +17,7 @@ from .metrics import station_state
 from .obs import Obs
 from .station_window import StationWindow
 from .timeutil import epoch, floor_5min
-from .window_metrics import WindowMetrics
+from .window_metrics import AtRisk, WindowMetrics
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
 STATUS_ROW_COLS = [
@@ -73,7 +73,7 @@ class StationState:
     rate_per_min: Optional[float]
     minutes_to_empty: Optional[float]
     minutes_to_full: Optional[float]
-    at_risk: Optional[str]
+    at_risk: Optional[AtRisk]
     temperature_c: Optional[float]
     precipitation_mm: Optional[float]
     as_of: datetime
