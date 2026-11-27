@@ -36,3 +36,19 @@ export const candidateLabelChange = (strength: Strength, current: readonly strin
     remove: current.filter((l) => STRENGTH_LABELS.includes(l) && l !== keep),
   };
 };
+
+/** The `gh issue edit` arguments that make `issue` a candidate of `strength`, replace its body and drop `agent:spec`. */
+export const specEditArgs = (
+  issue: string,
+  bodyFile: string,
+  strength: Strength,
+  current: readonly string[],
+): string[] => {
+  const change = candidateLabelChange(strength, current);
+  return [
+    "issue", "edit", issue, "--body-file", bodyFile,
+    "--remove-label", "agent:spec",
+    ...change.add.flatMap((l) => ["--add-label", l]),
+    ...change.remove.flatMap((l) => ["--remove-label", l]),
+  ];
+};
