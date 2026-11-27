@@ -7,9 +7,9 @@ from citibike_contract import TOPIC_STATUS, Envelope, encode
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
 from citibike_pipeline.kafka_io import Record
-from citibike_pipeline.metrics import station_state
 from citibike_pipeline.obs import Obs
 from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
+from citibike_pipeline.station_state import station_state
 from citibike_pipeline.storage import LocalStorage, S3Storage
 from citibike_pipeline.validation import validate_station_info_payload
 from citibike_pipeline.window_metrics import WindowMetrics

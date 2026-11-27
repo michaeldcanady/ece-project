@@ -16,7 +16,7 @@ from citibike_contract import InvalidPollLog, PollLog
 from . import lake
 from .batch_log import BatchLog
 from .config import PipelineConfig
-from .metrics import pct
+from .percentile import pct
 from .storage import Storage, put_json, read_parquet
 from .timeutil import epoch, from_epoch, iso
 

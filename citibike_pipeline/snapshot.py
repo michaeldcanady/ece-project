@@ -13,8 +13,8 @@ from typing import Callable, List, Optional
 import pyarrow as pa
 
 from .config import PipelineConfig
-from .metrics import station_state
 from .obs import Obs
+from .station_state import StateName, station_state
 from .station_window import StationWindow
 from .timeutil import epoch, floor_5min
 from .window_metrics import AtRisk, WindowMetrics
@@ -62,7 +62,7 @@ class StationState:
     lat: Optional[float]
     lon: Optional[float]
     capacity: Optional[int]
-    state: str
+    state: StateName
     num_bikes_available: int
     num_ebikes_available: int
     num_docks_available: int
