@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { z } from "zod";
 import { required } from "../shared/common";
 import { gh } from "../shared/gh";
-import { BLOCKED_LABEL, IMPLEMENT_LABEL, RECOVERED_LABEL } from "../shared/labels";
+import { BLOCKED_LABEL, IMPLEMENT_LABEL, RECOVERED_LABEL, labelNames } from "../shared/labels";
 import { failureComment, recoveryAction, redact } from "../shared/recovery";
 
 /**
@@ -23,9 +23,8 @@ const reason = redact(
 );
 
 const labels = z
-  .object({ labels: z.array(z.object({ name: z.string() })) })
-  .parse(JSON.parse(gh(["issue", "view", issue, "--json", "labels"])))
-  .labels.map((l) => l.name);
+  .object({ labels: labelNames })
+  .parse(JSON.parse(gh(["issue", "view", issue, "--json", "labels"]))).labels;
 const action = recoveryAction(labels);
 
 gh(["issue", "edit", issue, "--remove-label", "agent:in-progress"]);

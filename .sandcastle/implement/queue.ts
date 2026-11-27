@@ -9,17 +9,16 @@ export interface QueuedIssue {
 
 const has = (issue: QueuedIssue, label: string): boolean => issue.labels.some((l) => l.name === label);
 
+/** Sort key, larger first: `priority:high`, then a human request. */
+const rank = (issue: QueuedIssue): number => Number(has(issue, PRIORITY_HIGH_LABEL)) * 2 + Number(has(issue, REQUEST_LABEL));
+
 /**
  * Orders the implement queue: `priority:high` first, then human-filed issues (`request`) before the nightly scan's
  * candidates, then the oldest issue. The issue number breaks a tie so the order is the same on every run.
  */
 export const orderQueue = (issues: readonly QueuedIssue[]): QueuedIssue[] =>
   [...issues].sort(
-    (a, b) =>
-      Number(has(b, PRIORITY_HIGH_LABEL)) - Number(has(a, PRIORITY_HIGH_LABEL)) ||
-      Number(has(b, REQUEST_LABEL)) - Number(has(a, REQUEST_LABEL)) ||
-      Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
-      a.number - b.number,
+    (a, b) => rank(b) - rank(a) || Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.number - b.number,
   );
 
 /** The issue to implement next, or undefined when the queue is empty. */

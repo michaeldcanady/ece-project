@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /** The label names the Factory's workflows and scripts share. `setup.sh` creates them; `check_agent_labels.py` checks that. */
 
 /** A human filed the issue from the Request template; it outranks the nightly scan's candidates. */
@@ -15,3 +17,6 @@ export const RECOVERED_OK_LABEL = "agent:recovered-ok";
 export const BLOCKED_LABEL = "agent:blocked";
 export const DOOR_ONE_WAY_LABEL = "door:one-way";
 export const DOOR_TWO_WAY_LABEL = "door:two-way";
+
+/** The `labels` field `gh ... --json labels` returns, as the plain names. */
+export const labelNames = z.array(z.object({ name: z.string() })).transform((labels) => labels.map((l) => l.name));

@@ -14,5 +14,5 @@ test("autoImplement is false for a strong issue that is not a request, or is alr
 });
 
 test("autoImplement is false for a strong request from someone outside the repository", () => {
-  for (const who of ["NONE", "CONTRIBUTOR", "FIRST_TIMER"]) assert.equal(autoImplement(["request"], "strong", who), false);
+  for (const who of ["NONE", "CONTRIBUTOR", "FIRST_TIMER"] as const) assert.equal(autoImplement(["request"], "strong", who), false);
 });

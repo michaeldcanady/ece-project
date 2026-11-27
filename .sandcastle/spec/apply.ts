@@ -6,9 +6,9 @@ import { specSchema } from "./spec-plan";
 import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
 import { speccedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
-import { autoImplement } from "./spec-labels";
+import { authorAssociation, autoImplement } from "./spec-labels";
 import { gh } from "../shared/gh";
-import { IMPLEMENT_LABEL, RECOVERED_LABEL } from "../shared/labels";
+import { IMPLEMENT_LABEL, RECOVERED_LABEL, labelNames } from "../shared/labels";
 
 /**
  * Replace the issue body with the expanded spec, keeping the original note at the bottom, and label the issue a
@@ -18,8 +18,8 @@ import { IMPLEMENT_LABEL, RECOVERED_LABEL } from "../shared/labels";
 
 const issueFileSchema = z.object({
   body: z.string(),
-  labels: z.array(z.object({ name: z.string() })),
-  authorAssociation: z.string(),
+  labels: labelNames,
+  authorAssociation,
 });
 
 const issue = required("ISSUE_NUMBER");
@@ -32,7 +32,7 @@ const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "spec-")), "body.md
 fs.writeFileSync(file, speccedBody(spec.body, spec.strength, current.body));
 
 ensureCandidateLabels(gh);
-const labels = current.labels.map((l) => l.name);
+const labels = current.labels;
 // A success spends the retry: a later failure gets its own recovery attempt.
 const recovered = labels.includes(RECOVERED_LABEL) ? ["--remove-label", RECOVERED_LABEL] : [];
 gh([...specEditArgs(issue, file, spec.strength, labels), ...recovered]);

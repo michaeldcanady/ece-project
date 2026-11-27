@@ -1,13 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
-import { gh } from "../pr-review/github-reads";
 import { outputDir } from "../shared/common";
+import { gh } from "../shared/gh";
+import { labelNames as labels } from "../shared/labels";
 import { buildReport, type Issue, type Pr } from "./report";
 
 /** Reads issues and PRs with `gh` and writes report.md. No model runs here, so the job needs no secret. */
-
-const labels = z.array(z.object({ name: z.string() })).transform((l) => l.map((x) => x.name));
 
 const issuesSchema = z.array(
   z.object({

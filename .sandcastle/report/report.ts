@@ -44,12 +44,12 @@ export interface RecoveryCounts {
  * `agent:blocked` and has no such PR, `other` is everything else (still running, or its PR was closed unmerged).
  */
 export const recovery = (issues: readonly Issue[], prs: readonly Pr[], since: Date): RecoveryCounts => {
-  const withPr = new Set(prs.filter((p) => p.state !== "CLOSED").flatMap((p) => factoryIssue(p) ?? []));
+  const issuesWithPr = new Set(prs.filter((p) => p.state !== "CLOSED").flatMap((p) => factoryIssue(p) ?? []));
   const recovered = issues.filter(
     (i) => (i.labels.includes(RECOVERED_LABEL) || i.labels.includes(RECOVERED_OK_LABEL)) && within(i.updatedAt, since),
   );
-  const withPrCount = recovered.filter((i) => withPr.has(i.number) || i.labels.includes(RECOVERED_OK_LABEL)).length;
-  const blocked = recovered.filter((i) => !withPr.has(i.number) && !i.labels.includes(RECOVERED_OK_LABEL) && i.labels.includes(BLOCKED_LABEL)).length;
+  const withPrCount = recovered.filter((i) => issuesWithPr.has(i.number) || i.labels.includes(RECOVERED_OK_LABEL)).length;
+  const blocked = recovered.filter((i) => !issuesWithPr.has(i.number) && !i.labels.includes(RECOVERED_OK_LABEL) && i.labels.includes(BLOCKED_LABEL)).length;
   return { withPr: withPrCount, blocked, other: recovered.length - withPrCount - blocked };
 };
 
@@ -71,19 +71,19 @@ interface Figures {
 const figures = (issues: readonly Issue[], prs: readonly Pr[], now: Date): Figures => {
   const since = new Date(now.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const filed = issues.filter((i) => within(i.createdAt, since));
-  const factory = prs.filter((p) => factoryIssue(p) !== undefined && within(p.createdAt, since));
+  const factoryPrs = prs.filter((p) => factoryIssue(p) !== undefined && within(p.createdAt, since));
   const count = (kept: readonly Pr[], pred: (p: Pr) => boolean): number => kept.filter(pred).length;
   return {
     since,
     now,
     human: filed.filter((i) => i.labels.includes(REQUEST_LABEL)).length,
     scan: filed.filter((i) => i.labels.includes(CANDIDATE_LABEL) && !i.labels.includes(REQUEST_LABEL)).length,
-    opened: factory.length,
-    merged: count(factory, (p) => p.state === "MERGED"),
-    closed: count(factory, (p) => p.state === "CLOSED"),
-    open: count(factory, (p) => p.state === "OPEN"),
-    oneWay: count(factory, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL)),
-    doorLabeled: count(factory, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL) || p.labels.includes(DOOR_TWO_WAY_LABEL)),
+    opened: factoryPrs.length,
+    merged: count(factoryPrs, (p) => p.state === "MERGED"),
+    closed: count(factoryPrs, (p) => p.state === "CLOSED"),
+    open: count(factoryPrs, (p) => p.state === "OPEN"),
+    oneWay: count(factoryPrs, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL)),
+    doorLabeled: count(factoryPrs, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL) || p.labels.includes(DOOR_TWO_WAY_LABEL)),
     blocked: issues.filter((i) => i.state === "OPEN" && i.labels.includes(BLOCKED_LABEL)),
     recovery: recovery(issues, prs, since),
   };

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { recoveryAction } from "../shared/recovery";
 import { gh } from "../shared/gh";
-import { RECOVERED_LABEL, SPEC_LABEL } from "../shared/labels";
+import { RECOVERED_LABEL, SPEC_LABEL, labelNames } from "../shared/labels";
 import { required } from "../shared/common";
 
 /**
@@ -15,9 +15,8 @@ const runUrl = `${required("GITHUB_SERVER_URL")}/${required("GH_REPO")}/actions/
 
 // Read the labels now, not from the fetch artifact: the issue may have changed since the run began.
 const labels = z
-  .object({ labels: z.array(z.object({ name: z.string() })) })
-  .parse(JSON.parse(gh(["issue", "view", issue, "--json", "labels"])))
-  .labels.map((l) => l.name);
+  .object({ labels: labelNames })
+  .parse(JSON.parse(gh(["issue", "view", issue, "--json", "labels"]))).labels;
 
 if (recoveryAction(labels) === "retry") {
   const pat = required("AGENT_PAT");

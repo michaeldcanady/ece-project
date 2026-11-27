@@ -5,5 +5,6 @@ export const gh = (args: string[], token?: string): string =>
   execFileSync("gh", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
+    maxBuffer: 256 * 1024 * 1024,
     env: token === undefined ? process.env : { ...process.env, GH_TOKEN: token },
   });

@@ -1,10 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { gh } from "../shared/gh";
 
 /** Reads from GitHub that both fetch.ts (the snapshot) and apply.ts (a live look before writing) need. */
 
-export const gh = (args: string[]): string =>
-  execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 256 * 1024 * 1024 });
+export { gh };
 
 const reviewsSchema = z.array(
   z.array(z.object({ body: z.string().nullable(), user: z.object({ login: z.string() }).nullable() })),
