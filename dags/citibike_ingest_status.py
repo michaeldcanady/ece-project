@@ -4,16 +4,9 @@ No retries: the next run is a minute away, and a retry would double-poll. A fail
 recorded in pipeline.poll_log and shows up as a gap in the daily quality report.
 """
 from datetime import timedelta
-from enum import Enum
 
 from _common import DAG_KWARGS, default_args, run_poll
 from airflow.decorators import dag, task
-
-
-class Job(Enum):
-    STATION_STATUS = "station_status"
-    STATION_INFORMATION = "station_information"
-    WEATHER = "weather"
 
 
 @dag(
@@ -27,7 +20,7 @@ class Job(Enum):
 def citibike_ingest_status():
     @task
     def poll(**context):
-        return run_poll(Job.STATION_STATUS.value, context["ti"])
+        return run_poll("station_status", context["ti"])
 
     poll()
 

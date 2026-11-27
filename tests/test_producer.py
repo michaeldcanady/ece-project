@@ -18,7 +18,7 @@ from citibike_producer.weather_job import WeatherJob
 
 
 class _Producer(Protocol):
-    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=None): ...
+    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=0): ...
     def poll(self, t=0) -> int: ...
     def flush(self, t=0) -> int: ...
 
@@ -31,7 +31,7 @@ class FakeProducer:
         self._cbs = []
         self.fail = fail
 
-    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=None):
+    def produce(self, topic, key=None, value=None, on_delivery=None, timestamp=0):
         self.sent.append((topic, key.decode(), json.loads(value), timestamp))
         self.raw.append(value)
         if on_delivery:
@@ -321,7 +321,7 @@ def test_replay_preserves_event_time_and_marks_replay(tmp_path):
     sent = prod.sent[0][2]
     assert sent["fetched_at"] == "2026-10-20T14:00:00.000+00:00" and sent["replay"] is True
     assert parse_iso(sent["replayed_at"]) > parse_iso(sent["fetched_at"])
-    assert prod.sent[0][3] is None   # broker timestamp, not original CreateTime
+    assert prod.sent[0][3] == 0   # the client stamps the send time, not the original CreateTime
 
 
 def test_replay_skips_lines_that_are_not_envelopes_and_logs_their_reasons(tmp_path, caplog):

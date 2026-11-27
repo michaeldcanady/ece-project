@@ -45,11 +45,8 @@ class KafkaSink:
             batch.sent += 1
         while True:
             try:
-                if timestamp_ms is None:
-                    self._p.produce(topic, key=key.encode("utf-8"), value=value, on_delivery=on_delivery)
-                else:
-                    self._p.produce(topic, key=key.encode("utf-8"), value=value, on_delivery=on_delivery,
-                                    timestamp=timestamp_ms)
+                self._p.produce(topic, key=key.encode("utf-8"), value=value, on_delivery=on_delivery,
+                                timestamp=timestamp_ms or 0)      # 0 lets the client stamp the send time
                 break
             except BufferError:
                 self._p.poll(0.5)   # local queue full: serve callbacks, then retry

@@ -1,11 +1,10 @@
 """Hourly: merge the per-batch files of completed hours (older than 2 h) into one file per hour."""
+from dataclasses import asdict
 from datetime import timedelta
 from typing import Mapping
 
 from _common import DAG_KWARGS, default_args
 from airflow.decorators import dag, task
-
-from citibike_pipeline.compact_hour import CompactHour
 
 
 @dag(
@@ -16,11 +15,11 @@ from citibike_pipeline.compact_hour import CompactHour
     **DAG_KWARGS,
 )
 def citibike_compaction() -> None:
-    @task(multiple_outputs=True)   # one XCom entry per compacted hour partition
-    def compact() -> Mapping[str, CompactHour]:
+    @task(multiple_outputs=False)   # one XCom value, the nested mapping, as before the typing work
+    def compact() -> Mapping[str, Mapping[str, int]]:
         from citibike_pipeline import lake, runtime
         _, storage = runtime.build()
-        return lake.compact_due(storage)
+        return {name: asdict(result) for name, result in lake.compact_due(storage).items()}
 
     compact()
 
