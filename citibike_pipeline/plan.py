@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping
 
+from .jsonfields import as_int
 from .kafka_io import (
     Ranges,
     ranges_from_json,
@@ -55,4 +56,4 @@ class Plan:
     def from_json(cls, obj: JsonObject) -> Plan:
         return cls(run_id=str(obj["run_id"]), first_run_id=str(obj["first_run_id"]), batch_id=str(obj["batch_id"]),
                    planned_at=parse_iso(str(obj["planned_at"])), ranges=ranges_from_json(obj["ranges"]),
-                   total_messages=int(obj["total_messages"]))
+                   total_messages=as_int(obj["total_messages"]))

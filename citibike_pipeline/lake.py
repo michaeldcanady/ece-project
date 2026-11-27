@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Iterable, List, Mapping, MutableMapping, Optional, Sequence
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -99,7 +99,7 @@ class LakeTable:
 
         Overwrite-safe: a retry of the same batch rewrites the same files. If compaction has merged the
         batch's earlier files meanwhile, reads and the next compaction drop the duplicate rows."""
-        groups: Dict[datetime, List[Mapping[str, object]]] = {}
+        groups: MutableMapping[datetime, List[Mapping[str, object]]] = {}
         for r in rows:
             groups.setdefault(_floor_hour(r[_EVENT_TIME]), []).append(r)
         for hour, rs in sorted(groups.items()):
@@ -219,7 +219,7 @@ LAKE_TABLES = (RAW_STATUS, RAW_WEATHER, RAW_POLL_LOG, CURATED_STATUS, CURATED_WE
 RAW_BY_EVENT_TYPE = {"station_status": RAW_STATUS, "weather_current": RAW_WEATHER, "poll_log": RAW_POLL_LOG}
 
 
-def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int = 2) -> Dict[str, CompactHour]:
+def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int = 2) -> Mapping[str, CompactHour]:
     """Compact every lake table's hours that ended at least `lag_hours` ago.
 
     The lag keeps compaction away from the hours the micro-batch is still writing; it is not what makes
@@ -229,8 +229,7 @@ def compact_due(storage: Storage, now: Optional[datetime] = None, lag_hours: int
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)      # hour partitions are UTC
     cutoff = now - timedelta(hours=lag_hours)
-    # TODO: convert from a dict to a dataclass
-    result: Dict[str, CompactHour] = {}
+    result: MutableMapping[str, CompactHour] = {}
     # TODO: add compact_due method to LakeTable, so that the DAG can call it directly instead of
     # iterating over LAKE_TABLES
     for table in LAKE_TABLES:

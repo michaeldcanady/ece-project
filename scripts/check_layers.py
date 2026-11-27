@@ -37,6 +37,7 @@ LAYER_MAP = {
     "citibike_pipeline.config": "pipeline:core",
     "citibike_pipeline.enrichment": "pipeline:core",
     "citibike_pipeline.metrics": "pipeline:core",
+    "citibike_pipeline.jsonfields": "pipeline:core",
     "citibike_pipeline.observations": "pipeline:core",
     "citibike_pipeline.rows": "pipeline:core",
     "citibike_pipeline.snapshot": "pipeline:core",
@@ -59,6 +60,10 @@ LAYER_MAP = {
     "citibike_pipeline.schemas": "pipeline:infrastructure",
     "citibike_pipeline.serving": "pipeline:infrastructure",
     "citibike_pipeline.storage": "pipeline:infrastructure",
+    "citibike_pipeline.s3_paginator": "pipeline:infrastructure",
+    "citibike_pipeline.s3_exceptions": "pipeline:infrastructure",
+    "citibike_pipeline.s3_client": "pipeline:infrastructure",
+    "citibike_pipeline.s3_body": "pipeline:infrastructure",
     # pipeline: orchestration and entry
     "citibike_pipeline.batch": "pipeline:orchestration and entry",
     "citibike_pipeline.quality": "pipeline:orchestration and entry",

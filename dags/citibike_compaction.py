@@ -1,6 +1,6 @@
 """Hourly: merge the per-batch files of completed hours (older than 2 h) into one file per hour."""
 from datetime import timedelta
-from typing import Dict
+from typing import Mapping
 
 from _common import DAG_KWARGS, default_args
 from airflow.decorators import dag, task
@@ -16,8 +16,8 @@ from citibike_pipeline.lake import CompactHour
     **DAG_KWARGS,
 )
 def citibike_compaction() -> None:
-    @task
-    def compact() -> Dict[str, CompactHour]:
+    @task(multiple_outputs=True)   # one XCom entry per compacted hour partition
+    def compact() -> Mapping[str, CompactHour]:
         from citibike_pipeline import lake, runtime
         _, storage = runtime.build()
         return lake.compact_due(storage)

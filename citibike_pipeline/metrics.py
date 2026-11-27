@@ -1,9 +1,9 @@
 """Window metrics by rate extrapolation (no ML). Pure functions over event time."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from .config import PipelineConfig
 
@@ -46,49 +46,39 @@ def window_metrics(obs: List[Obs], as_of: float, cfg: PipelineConfig) -> Optiona
         return None
     first, last = w[0], w[-1]
     coverage = (last.t - first.t) / 60.0
-    out: Dict[str, Any] = {
-        "window_start": start,
-        "n_obs": len(w),
-        "coverage_min": coverage,
-        "bikes_first": first.bikes,
-        "bikes_last": last.bikes,
-        "docks_first": first.docks,
-        "docks_last": last.docks,
-        "net_change": last.bikes - first.bikes,
-        "rate_per_min": None,
-        "docks_rate_per_min": None,
-        "minutes_to_empty": None,
-        "minutes_to_full": None,
-        "at_risk_empty": False,
-        "at_risk_full": False,
-    }
+    base = WindowMetrics(
+        window_start=start, n_obs=len(w), coverage_min=coverage,
+        bikes_first=first.bikes, bikes_last=last.bikes, docks_first=first.docks, docks_last=last.docks,
+        net_change=last.bikes - first.bikes,
+        rate_per_min=None, docks_rate_per_min=None, minutes_to_empty=None, minutes_to_full=None,
+        at_risk_empty=False, at_risk_full=False,
+    )
     if len(w) < 2 or coverage < cfg.min_coverage_minutes:
         # too little history to extrapolate; an already empty/full station still reports 0
-        if last.bikes == 0:
-            out["minutes_to_empty"] = 0.0
-        if last.docks == 0:
-            out["minutes_to_full"] = 0.0
-        return WindowMetrics(**out)
+        return replace(base, minutes_to_empty=0.0 if last.bikes == 0 else None,
+                       minutes_to_full=0.0 if last.docks == 0 else None)
 
     bike_rate = (last.bikes - first.bikes) / coverage
     dock_rate = (last.docks - first.docks) / coverage
-    out["rate_per_min"], out["docks_rate_per_min"] = bike_rate, dock_rate
+    mte: Optional[float] = None
     if last.bikes == 0:
-        out["minutes_to_empty"] = 0.0
+        mte = 0.0
     elif bike_rate < 0:
-        out["minutes_to_empty"] = last.bikes / -bike_rate
+        mte = last.bikes / -bike_rate
+    mtf: Optional[float] = None
     if last.docks == 0:
-        out["minutes_to_full"] = 0.0
+        mtf = 0.0
     elif dock_rate < 0:
-        out["minutes_to_full"] = last.docks / -dock_rate
+        mtf = last.docks / -dock_rate
 
     noise = cfg.noise_floor_bikes
-    mte, mtf = out["minutes_to_empty"], out["minutes_to_full"]
-    out["at_risk_empty"] = (last.bikes > 0 and mte is not None and mte <= cfg.risk_horizon_minutes
-                            and (first.bikes - last.bikes) >= noise)
-    out["at_risk_full"] = (last.docks > 0 and mtf is not None and mtf <= cfg.risk_horizon_minutes
-                           and (first.docks - last.docks) >= noise)
-    return WindowMetrics(**out)
+    return replace(
+        base, rate_per_min=bike_rate, docks_rate_per_min=dock_rate, minutes_to_empty=mte, minutes_to_full=mtf,
+        at_risk_empty=(last.bikes > 0 and mte is not None and mte <= cfg.risk_horizon_minutes
+                       and (first.bikes - last.bikes) >= noise),
+        at_risk_full=(last.docks > 0 and mtf is not None and mtf <= cfg.risk_horizon_minutes
+                      and (first.docks - last.docks) >= noise),
+    )
 
 
 class StationStatus(Enum):

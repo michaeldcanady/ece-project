@@ -5,12 +5,13 @@ import io
 import json
 import os
 import tempfile
-from typing import Any, List, Optional, Protocol
+from typing import List, Optional, Protocol
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .config import PipelineConfig
+from .s3_client import S3Client
 
 
 class Storage(Protocol):
@@ -79,7 +80,8 @@ class LocalStorage:
 
 
 class S3Storage:
-    def __init__(self, bucket: str, prefix: str = "", endpoint_url: Optional[str] = None, client: Any = None):
+    def __init__(self, bucket: str, prefix: str = "", endpoint_url: Optional[str] = None,
+                 client: Optional[S3Client] = None):
         if client is None:
             import boto3
             client = boto3.client("s3", endpoint_url=endpoint_url)
@@ -134,11 +136,11 @@ def storage_from_config(cfg: PipelineConfig) -> Storage:
 
 # ---- helpers -------------------------------------------------------------------------------
 
-def put_json(storage: Storage, key: str, obj: Any) -> None:
+def put_json(storage: Storage, key: str, obj: object) -> None:
     storage.put(key, json.dumps(obj, sort_keys=True, indent=1).encode("utf-8"))
 
 
-def get_json(storage: Storage, key: str) -> Any:
+def get_json(storage: Storage, key: str) -> object:
     return json.loads(storage.get(key).decode("utf-8"))
 
 

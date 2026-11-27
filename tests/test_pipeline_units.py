@@ -208,3 +208,12 @@ def test_s3_storage_with_moto(monkeypatch):
         with pytest.raises(FileNotFoundError):
             s.get("raw/x.bin")
         assert_list_is_plain_prefix_match(S3Storage("lake", "other", client=client))
+
+
+def test_ranges_survive_json_and_malformed_ranges_are_refused():
+    from citibike_pipeline.kafka_io import ranges_from_json, ranges_to_json
+    ranges = {"t": {0: (5, 9), 2: (0, 3)}, "empty": {}}
+    assert ranges_from_json(ranges_to_json(ranges)) == ranges
+    for bad in ([], {"t": []}, {"t": {"0": [1]}}, {"t": {"0": ["a", 2]}}):
+        with pytest.raises(ValueError):
+            ranges_from_json(bad)

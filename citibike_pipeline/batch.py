@@ -22,6 +22,7 @@ from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
 from .enrichment import Dimension, enrich_status
 from .enrichment_context import EnrichmentContext
+from .jsonfields import as_int, as_object
 from .kafka_io import (
     KafkaBatchReader,
     cap_ranges,
@@ -72,7 +73,7 @@ class Published:
     def from_json(cls, obj: JsonObject) -> Published:
         published_at = obj["published_at"]
         return cls(published_at=parse_iso(str(published_at)) if published_at else None,
-                   stations=int(obj["stations"]), at_risk=int(obj.get("at_risk", 0)))
+                   stations=as_int(obj["stations"]), at_risk=as_int(obj.get("at_risk", 0)))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -82,13 +83,18 @@ class Published:
 PENDING_PLAN = "ops/batch_plan/pending.json"
 
 
+def _pending_plan(storage: Storage) -> Optional[Plan]:
+    """The plan stored as pending (planned, offsets not yet committed), or None."""
+    return Plan.from_json(as_object(get_json(storage, PENDING_PLAN))) if storage.exists(PENDING_PLAN) else None
+
+
 def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                now: Optional[datetime] = None) -> Plan:
     """The batch to process next. Reuses the pending (planned, not yet committed) plan when it still
     starts at the committed offsets and all its offsets still exist, so a rerun of a failed batch keeps
     its batch_id. Otherwise, e.g. after a broker reset recreated the topics, it plans afresh."""
     positions = reader.positions(DATA_TOPICS)
-    pending = Plan.from_json(get_json(storage, PENDING_PLAN)) if storage.exists(PENDING_PLAN) else None
+    pending = _pending_plan(storage)
     if pending is not None and fits_within(pending.ranges, positions):
         plan = replace(pending, run_id=run_id)
         if pending.first_run_id != run_id:
@@ -96,7 +102,7 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
     else:
         ranges = cap_ranges(positions, cfg.max_batch_per_partition)
         batch_id = "b" + hashlib.sha1(json.dumps(ranges_to_json(ranges), sort_keys=True).encode()).hexdigest()[:12]
-        planned_at = parse_iso(iso(now or utcnow()))        # to the millisecond, as stored
+        planned_at = parse_iso((now or utcnow()).isoformat(timespec="milliseconds"))   # to the millisecond, as stored
         plan = Plan(run_id=run_id, first_run_id=run_id, batch_id=batch_id, planned_at=planned_at,
                     ranges=ranges, total_messages=total_messages(ranges))
         if plan.has_data:
@@ -190,7 +196,8 @@ def finalize_batch(plan: Plan, stats: Stats, published: Published,
     BatchLog(storage).record(entry)
 
     reader.commit(plan.ranges)          # last: only after every output exists
-    if storage.exists(PENDING_PLAN) and Plan.from_json(get_json(storage, PENDING_PLAN)).batch_id == plan.batch_id:
+    pending = _pending_plan(storage)
+    if pending is not None and pending.batch_id == plan.batch_id:
         storage.delete(PENDING_PLAN)      # tidy only: after the commit its starts no longer match anyway
     log.info("batch %s: committed offsets, latency p50=%s p95=%s", plan.batch_id, latencies.p50_s,
              latencies.p95_s)

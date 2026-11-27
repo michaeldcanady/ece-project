@@ -19,13 +19,13 @@ import mypy.api
 # path -> mypy errors allowed (the count when the check was added). Only ever lower these.
 BASELINE: Mapping[str, int] = {
     "citibike_contract/envelope.py": 1,
-    "citibike_pipeline/batch.py": 2,
-    "citibike_pipeline/plan.py": 2,
+    "citibike_pipeline/batch.py": 0,
+    "citibike_pipeline/plan.py": 0,
     "citibike_pipeline/stats.py": 1,
     "citibike_pipeline/batch_log.py": 10,
     "citibike_pipeline/counts.py": 1,
     "citibike_pipeline/enrichment.py": 5,
-    "citibike_pipeline/kafka_io.py": 1,
+    "citibike_pipeline/kafka_io.py": 0,
     "citibike_pipeline/lake.py": 1,
     "citibike_pipeline/observations.py": 9,
     "citibike_pipeline/quality.py": 0,
