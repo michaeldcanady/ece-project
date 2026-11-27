@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Iterable, List, Literal, Mapping, Optional
 import pyarrow as pa
 
 from . import lake
-from .metrics import pct
+from .percentile import pct
 from .schemas import BATCH_LOG as BATCH_LOG_SCHEMA
 from .schemas import to_table
 from .storage import Storage, put_parquet, read_parquet

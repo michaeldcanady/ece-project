@@ -22,7 +22,6 @@ BASELINE = {
     "citibike_contract/envelope.py": 5,
     "citibike_pipeline/kafka_io.py": 5,
     "citibike_pipeline/lake.py": 6,
-    "citibike_pipeline/metrics.py": 4,
     "citibike_pipeline/quality.py": 19,
     "citibike_pipeline/station_info.py": 5,
     "citibike_pipeline/storage.py": 3,
