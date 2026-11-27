@@ -113,3 +113,18 @@ _Avoid_: backfill, resend
 The key an envelope is sent under: the station for station events, the location for weather, the job
 for poll logs. It decides the partition, and on the station information topic, which envelope Kafka keeps.
 _Avoid_: Kafka identity (that names a stored message; the key groups messages)
+
+## The agent workflows
+
+**Door**:
+How reversible a change is. A one-way door cannot be undone by reverting it; a two-way door can.
+_Avoid_: risk, impact
+
+**Spec**:
+A GitHub issue body that says what to build and how to check it. The issue is its own spec; the pull request that
+closes it records the delivery.
+_Avoid_: ticket, design doc
+
+**Strength**:
+How much of a spec's work an agent can do unattended, set by the `strength:` label on the issue.
+_Avoid_: size, priority

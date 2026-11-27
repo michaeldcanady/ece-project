@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import { claudeAgent, fail, required, writeJson } from "../shared/common";
+import { claudeAgent, fail, required, writeJson, writingStyle } from "../shared/common";
 import { alreadyFiledList } from "../shared/candidate-issue";
 import { runWithExtraction } from "../shared/run-with-extraction";
 import { existingSchema, planSchema } from "./plan";
@@ -31,6 +31,7 @@ try {
     promptFile: here("prompt.md"),
     promptArgs: {
       ALREADY_FILED: alreadyFiled,
+      WRITING_STYLE: writingStyle(),
       STRENGTH_RUBRIC: fs.readFileSync(path.join(import.meta.dirname, "../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(path.join(import.meta.dirname, "../shared/spec-format.md"), "utf8"),
     },

@@ -26,3 +26,7 @@ Do not push, open or edit PRs, touch issue labels, or modify `.github/`, `.sandc
 `CODING_STANDARDS.md`.
 
 When the acceptance criteria are met and `mise run check` is green, output `<promise>COMPLETE</promise>`.
+
+# WRITING STYLE
+
+{{WRITING_STYLE}}

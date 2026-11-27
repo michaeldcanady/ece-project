@@ -4,11 +4,13 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import {
   claudeAgent,
+  claudeReviewAgent,
   exec,
   fail,
   outputDir,
   required,
   writeText,
+  writingStyle,
 } from "../shared/common";
 
 /**
@@ -69,7 +71,7 @@ try {
     name: `implement-#${ISSUE_NUMBER}`,
     maxIterations: MAX_ITERATIONS,
     promptFile: here("prompt.md"),
-    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext },
+    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, WRITING_STYLE: writingStyle() },
   });
 
   if (commitsAhead() === 0) fail("The implement agent made no commits.");
@@ -82,10 +84,11 @@ try {
   const notesFile = path.join(outputDir(), "review_notes.md");
   await sandcastle.run({
     ...common,
+    agent: claudeReviewAgent(),
     name: `review-#${ISSUE_NUMBER}`,
     maxIterations: 1,
     promptFile: here("review-prompt.md"),
-    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: notesFile },
+    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: notesFile, WRITING_STYLE: writingStyle() },
   });
 
   guardProtected("The review pass");
