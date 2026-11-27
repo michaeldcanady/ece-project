@@ -46,6 +46,8 @@ LAYER_MAP = {
     "citibike_pipeline.batch_log": "pipeline:infrastructure",
     "citibike_pipeline.batch_log_entry": "pipeline:infrastructure",
     "citibike_pipeline.counts": "pipeline:infrastructure",
+    "citibike_pipeline.plan": "pipeline:infrastructure",
+    "citibike_pipeline.stats": "pipeline:infrastructure",
     "citibike_pipeline.latencies": "pipeline:infrastructure",
     "citibike_pipeline.dead_letter_row": "pipeline:infrastructure",
     "citibike_pipeline.decoded_batch": "pipeline:infrastructure",

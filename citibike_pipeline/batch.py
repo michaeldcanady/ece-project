@@ -17,26 +17,26 @@ from datetime import datetime, timedelta
 from typing import List, Mapping, Optional, Tuple
 
 from . import lake, serving
-from .batch_log import BatchLog, BatchLogEntry, Counts, Latencies
+from .batch_log import BatchLog, BatchLogEntry, Latencies
 from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
 from .enrichment import Dimension, enrich_status
 from .enrichment_context import EnrichmentContext
 from .kafka_io import (
     KafkaBatchReader,
-    Ranges,
     cap_ranges,
     fits_within,
-    ranges_from_json,
     ranges_to_json,
     total_messages,
 )
+from .plan import Plan
 from .rows import CuratedWeatherRow, as_mappings
 from .schemas import (
     DLQ,
     to_table,
 )
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
+from .stats import Stats
 from .storage import Storage, get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
 
@@ -55,51 +55,6 @@ def safe_id(run_id: str) -> str:
 # from_json indexes every field (a missing one raises KeyError), except Published.at_risk: old in-flight XCom lacks it.
 
 JsonObject = Mapping[str, object]
-
-
-@dataclass(frozen=True)
-class Plan:
-    """A batch's offset ranges, fixed before anything is read, and the runs that planned and took it."""
-    run_id: str
-    first_run_id: str
-    batch_id: str
-    planned_at: datetime
-    ranges: Ranges
-    total_messages: int
-
-    @property
-    def has_data(self) -> bool:
-        return self.total_messages > 0
-
-    def to_json(self) -> JsonObject:
-        return {"run_id": self.run_id, "first_run_id": self.first_run_id, "batch_id": self.batch_id,
-                "planned_at": iso(self.planned_at), "ranges": ranges_to_json(self.ranges),
-                "total_messages": self.total_messages}
-
-    @classmethod
-    def from_json(cls, obj: JsonObject) -> Plan:
-        return cls(run_id=str(obj["run_id"]), first_run_id=str(obj["first_run_id"]), batch_id=str(obj["batch_id"]),
-                   planned_at=parse_iso(str(obj["planned_at"])), ranges=ranges_from_json(obj["ranges"]),
-                   total_messages=int(obj["total_messages"]))
-
-
-@dataclass(frozen=True)
-class Stats:
-    """What process_batch counted and wrote for a batch. The JSON keeps the counts flat."""
-    batch_id: str
-    as_of: datetime
-    counts: Counts
-    status_hours: Tuple[datetime, ...]
-
-    def to_json(self) -> JsonObject:
-        return {"batch_id": self.batch_id, "as_of": iso(self.as_of), **self.counts.to_json(),
-                "status_hours": [iso(h) for h in self.status_hours]}
-
-    @classmethod
-    def from_json(cls, obj: JsonObject) -> Stats:
-        return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])), counts=Counts.from_json(obj),
-                   status_hours=tuple(parse_iso(str(h)) for h in obj["status_hours"]))
-
 
 @dataclass(frozen=True)
 class Published:
