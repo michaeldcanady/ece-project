@@ -3,7 +3,7 @@
 Sandcastle fails the run when a placeholder has no matching value in `promptArgs` and only warns about an unused
 arg. Neither fails the typecheck or a test, only the nightly run. Each `promptFile: here("x.md")` in a
 `.sandcastle/` TypeScript file is paired with the `promptArgs: { ... }` that follows it in the same call, and with
-the file `x.md` next to it.
+the file `x.md` next to it. `promptArgs` must be written after `promptFile` in the call; every call here does.
 
 Usage: python scripts/check_prompt_args.py   (run by `mise run lint`)
 """
