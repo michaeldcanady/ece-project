@@ -4,84 +4,22 @@ Every key derives from the batch id, so a retry of the same batch overwrites its
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
 from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Iterable, List, Literal, Mapping, Optional
+from typing import List, Mapping
 
 import pyarrow as pa
 
 from . import lake
-from .metrics import pct
+from .batch_log_entry import BatchLogEntry
+from .counts import Counts
+from .latencies import Latencies
 from .schemas import BATCH_LOG as BATCH_LOG_SCHEMA
 from .schemas import to_table
 from .storage import Storage, put_parquet, read_parquet
 
-if TYPE_CHECKING:
-    from .batch import Plan, Published, Stats
-
 SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
 BATCH_LOG = "ops/batch_log"
 RECENT = timedelta(hours=24)
-
-
-@dataclass(frozen=True)
-class Counts:
-    """What a batch read, wrote and flagged. Flat on the wire: the Stats JSON and the Batch log columns."""
-    records_read: int
-    raw_rows: int
-    status_rows: int
-    weather_rows: int
-    dlq_rows: int
-    duplicates_dropped: int
-    repeats: int
-    out_of_order: int
-    stale: int
-    unknown_station: int
-    replay_rows: int
-
-    def to_json(self) -> Mapping[str, int]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
-
-    @classmethod
-    def from_json(cls, obj: Mapping[str, object]) -> Counts:
-        """Rebuild from flat keys; a missing key raises KeyError."""
-        return cls(**{f.name: int(obj[f.name]) for f in fields(cls)})
-
-
-@dataclass(frozen=True)
-class Latencies:
-    """Seconds from observation to serving, summarised over a batch's status rows; None when it had none."""
-    p50_s: Optional[float]
-    p95_s: Optional[float]
-    max_s: Optional[float]
-
-    @classmethod
-    def from_seconds(cls, seconds: Iterable[float]) -> Latencies:
-        lat = sorted(seconds)
-        return cls(p50_s=pct(lat, 0.50), p95_s=pct(lat, 0.95), max_s=lat[-1] if lat else None)
-
-
-@dataclass(frozen=True)
-class BatchLogEntry:
-    """A batch's counts and latencies, as written when it finished."""
-    batch_id: str
-    run_id: str
-    as_of: datetime
-    planned_at: datetime
-    published_at: Optional[datetime]
-    finished_at: datetime
-    counts: Counts
-    latencies: Latencies
-    status: Literal["success"]
-
-    @classmethod
-    def from_batch(cls, plan: Plan, stats: Stats, published: Published, latencies: Latencies,
-                   finished_at: datetime) -> BatchLogEntry:
-        """The entry for a batch that went through every step."""
-        return cls(batch_id=plan.batch_id, run_id=plan.run_id, as_of=stats.as_of, planned_at=plan.planned_at,
-                   published_at=published.published_at, finished_at=finished_at, counts=stats.counts,
-                   latencies=latencies, status="success")
-
 
 class BatchLog:
     """The Batch log in a lake: record(entry), recent() and day(date)."""

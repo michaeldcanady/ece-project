@@ -20,7 +20,8 @@ import mypy.api
 BASELINE: Mapping[str, int] = {
     "citibike_contract/envelope.py": 1,
     "citibike_pipeline/batch.py": 5,
-    "citibike_pipeline/batch_log.py": 11,
+    "citibike_pipeline/batch_log.py": 10,
+    "citibike_pipeline/counts.py": 1,
     "citibike_pipeline/enrichment.py": 5,
     "citibike_pipeline/kafka_io.py": 1,
     "citibike_pipeline/lake.py": 1,

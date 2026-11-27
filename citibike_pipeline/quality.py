@@ -161,6 +161,7 @@ class DLQSection(BaseModel):
     by_reason: Dict[str, int]
 
 def _dlq_section(storage: Storage, start: datetime) -> DLQSection:
+    """Count the day's DLQ rows by reason. Streams one hour at a time to bound memory."""
     reasons: Counter = Counter()
     for h in range(24):
         for key in storage.list(lake.partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
