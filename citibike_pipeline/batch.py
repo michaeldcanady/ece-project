@@ -24,15 +24,11 @@ from .config import DATA_TOPICS, PipelineConfig
 from .decoded_batch import DecodedBatch
 from .enrichment import enrich_status
 from .enrichment_context import EnrichmentContext
+from .hour_partitions import part_key
 from .jsonfields import as_int, as_object
-from .kafka_io import (
-    KafkaBatchReader,
-    cap_ranges,
-    fits_within,
-    ranges_to_json,
-    total_messages,
-)
+from .kafka_batch_reader import KafkaBatchReader
 from .plan import Plan
+from .ranges import cap_ranges, fits_within, ranges_to_json, total_messages
 from .rows import CuratedWeatherRow, as_mappings
 from .schemas import (
     DLQ,
@@ -41,9 +37,9 @@ from .schemas import (
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
 from .station_information import StationInformation
 from .stats import Stats
-from .storage import Storage, get_json, put_json, put_parquet, read_parquet
+from .storage import Storage
+from .storage_ops import get_json, put_json, put_parquet, read_parquet
 from .timeutil import iso, parse_iso, utcnow
-from .weather_reading import WEATHER_READING_COLS, WeatherReading
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +140,7 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     status_hours = lake.CURATED_STATUS.write(storage, batch_id, as_mappings(status_rows))
     lake.CURATED_WEATHER.write(storage, batch_id, as_mappings(weather_rows))
     if decoded.dead_letters:
-        put_parquet(storage, lake.part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
+        put_parquet(storage, part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
                     to_table([asdict(r) for r in decoded.dead_letters], DLQ))
 
     stats = Stats(batch_id=batch_id, as_of=as_of, status_hours=tuple(status_hours),

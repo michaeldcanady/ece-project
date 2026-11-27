@@ -4,14 +4,18 @@ from datetime import datetime, timezone
 import pytest
 
 from citibike_contract import TOPIC_STATUS, Envelope, encode
-from citibike_pipeline import metrics
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
-from citibike_pipeline.kafka_io import Record
-from citibike_pipeline.metrics import Obs, station_state, window_metrics
-from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
+from citibike_pipeline.local_storage import LocalStorage
+from citibike_pipeline.metrics import window_metrics
+from citibike_pipeline.obs import Obs
+from citibike_pipeline.record import Record
+from citibike_pipeline.rejected import Rejected
+from citibike_pipeline.s3_storage import S3Storage
+from citibike_pipeline.station_condition import StationCondition, station_condition
 from citibike_pipeline.station_information import StationInformation
-from citibike_pipeline.storage import LocalStorage, S3Storage
+from citibike_pipeline.station_status import StationStatus
+from citibike_pipeline.weather_observation import WeatherObservation
 
 CFG = PipelineConfig()
 NOW = 1_760_000_000.0
@@ -137,11 +141,11 @@ def test_observations_outside_window_are_ignored():
 
 
 def test_station_state_precedence():
-    assert station_state(True, True, True, False, 0, 5) == metrics.StationStatus.EMPTY
-    assert station_state(True, True, True, False, 5, 0) == metrics.StationStatus.FULL
-    assert station_state(True, True, True, True, 0, 5) == metrics.StationStatus.STALE
-    assert station_state(True, False, True, True, 0, 5) == metrics.StationStatus.OFFLINE
-    assert station_state(True, True, True, False, 5, 5) == metrics.StationStatus.OK
+    assert station_condition(True, True, True, False, 0, 5) == StationCondition.EMPTY
+    assert station_condition(True, True, True, False, 5, 0) == StationCondition.FULL
+    assert station_condition(True, True, True, True, 0, 5) == StationCondition.STALE
+    assert station_condition(True, False, True, True, 0, 5) == StationCondition.OFFLINE
+    assert station_condition(True, True, True, False, 5, 5) == StationCondition.OK
 
 
 def test_local_storage_roundtrip_and_safety(tmp_path):
@@ -211,7 +215,7 @@ def test_s3_storage_with_moto(monkeypatch):
 
 
 def test_ranges_survive_json_and_malformed_ranges_are_refused():
-    from citibike_pipeline.kafka_io import ranges_from_json, ranges_to_json
+    from citibike_pipeline.ranges import ranges_from_json, ranges_to_json
     ranges = {"t": {0: (5, 9), 2: (0, 3)}, "empty": {}}
     assert ranges_from_json(ranges_to_json(ranges)) == ranges
     for bad in ([], {"t": []}, {"t": {"0": [1]}}, {"t": {"0": ["a", 2]}}):

@@ -1,46 +1,18 @@
-"""Station status and Weather observation: the payloads of the two event types the Batch turns into curated rows,
-parsed once where they enter the pipeline.
+"""Station status: the payload of the station-status event type, parsed once where it enters the pipeline.
 
-`StationStatus.parse` and `WeatherObservation.parse` return the record, or a `Rejected` with the reason codes the
-dead-letter rows carry. Past the parse, code reads attributes: nothing re-checks a payload field. The reason
-codes are what the DLQ stores, so they are stable.
-"""
+`StationStatus.parse` returns the record, or a `Rejected` with the reason codes the dead-letter rows carry. Past the
+parse, code reads attributes. The reason codes are what the DLQ stores, so they are stable."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Generic, List, Optional, Tuple, TypeVar, Union
+from typing import List, Optional, Union
 
-from citibike_contract import Envelope, JsonObject
+from citibike_contract import JsonObject
 
-from .kafka_io import Record
-from .timeutil import from_epoch
-
-T = TypeVar("T")
+from .jsonnumbers import is_int
+from .rejected import Rejected
 
 BOOL_LIKE = (0, 1, True, False)
-
-
-@dataclass(frozen=True)
-class Rejected:
-    """A payload that failed its parse, with every reason it failed."""
-    reasons: Tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Delivered(Generic[T]):
-    """A parsed observation with the Kafka record and the envelope it arrived in."""
-    record: Record
-    envelope: Envelope
-    value: T
-
-
-def is_int(x: object) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool)
-
-
-def is_num(x: object) -> bool:
-    return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
 def _optional_count(payload: JsonObject, field: str, errors: List[str]) -> Optional[int]:
@@ -104,41 +76,3 @@ class StationStatus:
                    num_docks_available=int(counts["num_docks_available"]),
                    num_ebikes_available=ebikes, num_bikes_disabled=bikes_disabled,
                    num_docks_disabled=docks_disabled, **flags)
-
-
-@dataclass(frozen=True)
-class WeatherObservation:
-    """The current weather at a location. Only the time and the temperature are checked by the parse; the
-    other measures pass through as the source sent them."""
-    location_id: Optional[str]
-    obs_time: datetime
-    temperature_c: Optional[float]
-    relative_humidity: Optional[float]
-    precipitation_mm: Optional[float]
-    rain_mm: Optional[float]
-    snowfall_cm: Optional[float]
-    weather_code: Optional[int]
-    cloud_cover: Optional[float]
-    wind_speed_kmh: Optional[float]
-
-    @classmethod
-    def parse(cls, payload: JsonObject) -> Union[WeatherObservation, Rejected]:
-        """The weather observation, or why the payload is not one."""
-        current = payload.get("current")
-        if not isinstance(current, dict):
-            return Rejected(("missing_current",))
-        errors = []
-        if not is_num(current.get("time")):
-            errors.append("bad_obs_time")
-        temperature = current.get("temperature_2m")
-        if temperature is not None and not is_num(temperature):
-            errors.append("bad_temperature")
-        if errors:
-            return Rejected(tuple(errors))
-        return cls(
-            location_id=payload.get("location_id"),
-            obs_time=from_epoch(current["time"]), temperature_c=temperature,
-            relative_humidity=current.get("relative_humidity_2m"), precipitation_mm=current.get("precipitation"),
-            rain_mm=current.get("rain"), snowfall_cm=current.get("snowfall"),
-            weather_code=current.get("weather_code"), cloud_cover=current.get("cloud_cover"),
-            wind_speed_kmh=current.get("wind_speed_10m"))

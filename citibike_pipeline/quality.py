@@ -11,7 +11,8 @@ from .daily_quality_report_thresholds import DailyQualityReportThresholds
 from .dlq_section import DLQSection
 from .poll_section import PollSection
 from .section_status import SectionStatus
-from .storage import Storage, put_json
+from .storage import Storage
+from .storage_ops import put_json
 from .verdict import Verdict
 
 log = logging.getLogger(__name__)

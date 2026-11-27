@@ -8,7 +8,9 @@ from typing import Mapping
 from pydantic import BaseModel
 
 from . import lake
-from .storage import Storage, read_parquet
+from .hour_partitions import partition_path
+from .storage import Storage
+from .storage_ops import read_parquet
 
 
 class DLQSection(BaseModel):
@@ -20,7 +22,7 @@ class DLQSection(BaseModel):
         """Count the day's DLQ rows by reason. Streams one hour at a time to bound memory."""
         reasons: Counter = Counter()
         for h in range(24):
-            for key in storage.list(lake.partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
+            for key in storage.list(partition_path(lake.DLQ, start + timedelta(hours=h)) + "/"):
                 if key.endswith(".parquet"):
                     reasons.update(read_parquet(storage, key, columns=["reason"])["reason"].to_pylist())
         return DLQSection(total=sum(reasons.values()), by_reason=dict(reasons.most_common()))

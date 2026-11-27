@@ -1,79 +1,21 @@
-"""HTTP access to GBFS and Open-Meteo. Never raises: failures come back as FetchResult."""
+"""Resolves GBFS feed URLs from the discovery file (gbfs.json) and caches them."""
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from dataclasses import dataclass
-from typing import Mapping, MutableMapping, Optional, Union
-
-import requests
+from typing import Mapping, MutableMapping, Optional
 
 from citibike_contract import (
-    OUTCOME_CONNECTION,
-    OUTCOME_HTTP,
-    OUTCOME_OK,
-    OUTCOME_PARSE,
-    OUTCOME_TIMEOUT,
     JsonObject,
-    Outcome,
-    utc_now_iso,
 )
 
 from .config import Config
 from .discovery_state import DiscoveryState
+from .http_client import HttpClient
 from .jsonvalues import mapping_or_empty, optional_str
 
 log = logging.getLogger(__name__)
-
-QueryParams = Mapping[str, Union[str, float]]
-
-
-@dataclass
-class FetchResult:
-    outcome: Outcome
-    url: str
-    started_at: str
-    fetched_at: Optional[str] = None
-    http_status: Optional[int] = None
-    latency_ms: Optional[int] = None
-    body: Optional[JsonObject] = None
-    error: Optional[str] = None
-
-    @property
-    def ok(self) -> bool:
-        return self.outcome == OUTCOME_OK
-
-
-class HttpClient:
-    def __init__(self, cfg: Config, session: Optional[requests.Session] = None):
-        self._timeout = (cfg.http_connect_timeout_s, cfg.http_read_timeout_s)
-        self._session = session or requests.Session()
-        self._session.headers.update({"User-Agent": cfg.user_agent, "Accept": "application/json"})
-
-    def get_json(self, url: str, params: Optional[QueryParams] = None) -> FetchResult:
-        started_at = utc_now_iso()
-        t0 = time.monotonic()
-        try:
-            resp = self._session.get(url, params=params, timeout=self._timeout)
-        except requests.Timeout as exc:
-            return FetchResult(OUTCOME_TIMEOUT, url, started_at, error=str(exc)[:300])
-        except requests.RequestException as exc:
-            return FetchResult(OUTCOME_CONNECTION, url, started_at, error=str(exc)[:300])
-        fetched_at = utc_now_iso()
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        if resp.status_code != 200:
-            return FetchResult(OUTCOME_HTTP, url, started_at, fetched_at, resp.status_code,
-                               latency_ms, error="HTTP %d" % resp.status_code)
-        try:
-            body = resp.json()
-        except ValueError as exc:
-            return FetchResult(OUTCOME_PARSE, url, started_at, fetched_at, resp.status_code,
-                               latency_ms, error="invalid JSON: %s" % str(exc)[:200])
-        if not isinstance(body, dict):
-            return FetchResult(OUTCOME_PARSE, url, started_at, fetched_at, resp.status_code,
-                               latency_ms, error="JSON root is not an object")
-        return FetchResult(OUTCOME_OK, url, started_at, fetched_at, resp.status_code, latency_ms, body)
 
 
 class FeedRegistry:
@@ -145,20 +87,3 @@ def parse_discovery(body: JsonObject, language: str) -> Mapping[str, str]:
         if isinstance(feed, Mapping) and "name" in feed and "url" in feed:
             urls[str(feed["name"])] = str(feed["url"])
     return urls
-
-
-WEATHER_VARIABLES = (
-    "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,"
-    "rain,snowfall,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m"
-)
-
-
-def fetch_weather(cfg: Config, client: HttpClient) -> FetchResult:
-    params: QueryParams = {
-        "latitude": cfg.weather_lat,
-        "longitude": cfg.weather_lon,
-        "current": WEATHER_VARIABLES,
-        "timeformat": "unixtime",   # unambiguous UTC epoch seconds
-        "timezone": "UTC",
-    }
-    return client.get_json(cfg.open_meteo_url, params=params)

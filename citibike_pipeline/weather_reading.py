@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import pyarrow as pa
 
-from .observations import WeatherObservation
+from .weather_observation import WeatherObservation
 
 # The curated weather columns the as-of join reads; `WeatherReading.from_table` reads exactly these.
 WEATHER_READING_COLS = ["obs_time", "temperature_c", "precipitation_mm", "weather_code", "wind_speed_kmh"]

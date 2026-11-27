@@ -11,7 +11,8 @@ import pyarrow as pa
 
 from citibike_contract import JsonObject
 
-from .observations import Rejected, is_int
+from .jsonnumbers import is_int
+from .rejected import Rejected
 
 _COLUMNS = ["station_id", "name", "short_name", "lat", "lon", "capacity", "region_id"]
 

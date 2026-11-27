@@ -5,7 +5,7 @@ from typing import Mapping
 from _common import DAG_KWARGS, default_args
 from airflow.decorators import dag, task
 
-from citibike_pipeline.lake import CompactHour
+from citibike_pipeline.compact_hour import CompactHour
 
 
 @dag(

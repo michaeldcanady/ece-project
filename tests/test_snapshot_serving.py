@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 
 from citibike_pipeline import lake, serving
 from citibike_pipeline.config import PipelineConfig
+from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.snapshot import StatusRow, compute_snapshot
-from citibike_pipeline.storage import LocalStorage
 
 CFG = PipelineConfig()
 AS_OF = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)

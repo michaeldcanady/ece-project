@@ -9,13 +9,14 @@ from typing import List, Mapping
 
 import pyarrow as pa
 
-from . import lake
 from .batch_log_entry import BatchLogEntry
 from .counts import Counts
+from .hour_partitions import part_key, partition_path
 from .latencies import Latencies
 from .schemas import BATCH_LOG as BATCH_LOG_SCHEMA
 from .schemas import to_table
-from .storage import Storage, put_parquet, read_parquet
+from .storage import Storage
+from .storage_ops import put_parquet, read_parquet
 
 SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
 BATCH_LOG = "ops/batch_log"
@@ -29,7 +30,7 @@ class BatchLog:
 
     def record(self, entry: BatchLogEntry) -> None:
         """Write the batch's own file, then update the rolling serving copy (deduped by batch id, last 24 h)."""
-        put_parquet(self._storage, lake.part_key(BATCH_LOG, entry.as_of, "%s.parquet" % entry.batch_id),
+        put_parquet(self._storage, part_key(BATCH_LOG, entry.as_of, "%s.parquet" % entry.batch_id),
                     _table([entry]))
         kept = [e for e in self.recent(entry.as_of) if e.batch_id != entry.batch_id]
         kept.append(entry)
@@ -48,7 +49,7 @@ class BatchLog:
         start = datetime.combine(day, time(), tzinfo=timezone.utc)
         out: List[BatchLogEntry] = []
         for h in range(24):
-            for key in self._storage.list(lake.partition_path(BATCH_LOG, start + timedelta(hours=h)) + "/"):
+            for key in self._storage.list(partition_path(BATCH_LOG, start + timedelta(hours=h)) + "/"):
                 if key.endswith(".parquet"):
                     out.extend(_entries(self._storage, key))
         return sorted(out, key=lambda e: e.as_of)

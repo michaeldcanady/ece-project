@@ -8,8 +8,9 @@ from typing import List, Set, Tuple
 import pyarrow.compute as pc
 
 from citibike_pipeline.batch_log import BatchLog
-from citibike_pipeline.kafka_io import Ranges
-from citibike_pipeline.storage import Storage, read_parquet
+from citibike_pipeline.ranges import Ranges
+from citibike_pipeline.storage import Storage
+from citibike_pipeline.storage_ops import read_parquet
 
 from .check_result import CheckResult
 from .lake_scan import read_all

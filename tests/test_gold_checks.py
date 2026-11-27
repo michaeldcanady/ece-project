@@ -2,7 +2,8 @@
 from dataclasses import asdict, replace
 
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.metrics import Obs, window_metrics
+from citibike_pipeline.metrics import window_metrics
+from citibike_pipeline.obs import Obs
 from tests.e2e_live.gold_checks import window_row_problems
 
 CFG = PipelineConfig()

@@ -8,7 +8,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import List, Mapping, Optional, Sequence
 
-from .observations import Delivered, WeatherObservation
+from .delivered import Delivered
+from .weather_observation import WeatherObservation
 
 
 @dataclass(frozen=True)

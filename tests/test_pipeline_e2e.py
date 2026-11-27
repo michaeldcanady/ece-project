@@ -11,10 +11,11 @@ from citibike_contract import TOPIC_STATUS, Envelope, encode, parse_iso
 from citibike_pipeline import batch, lake, serving
 from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.config import PipelineConfig
-from citibike_pipeline.kafka_io import KafkaBatchReader
+from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
+from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.quality import daily_quality
 from citibike_pipeline.station_info import build_dim_station
-from citibike_pipeline.storage import LocalStorage, read_parquet
+from citibike_pipeline.storage_ops import read_parquet
 from citibike_pipeline.verdict import Verdict
 from citibike_producer.synthetic import generate
 
@@ -309,7 +310,7 @@ def batches_in_hour(storage, table=CURATED, hour=HOUR):
 
 
 def test_compaction_is_lossless_idempotent_and_verified(tmp_path, capture):
-    from citibike_pipeline.lake import CompactHour
+    from citibike_pipeline.compact_hour import CompactHour
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     drain(reader, storage, cfg)
     on_disk = len(curated_rows(storage))

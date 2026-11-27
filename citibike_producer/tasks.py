@@ -14,13 +14,16 @@ from typing import Optional
 from citibike_contract import TOPIC_INFO, TOPIC_STATUS
 
 from .config import Config
-from .jobs import GbfsStationJob, Job, WeatherJob
+from .feed_registry import FeedRegistry
+from .gbfs_station_job import GbfsStationJob
+from .http_client import HttpClient
+from .job import Job
+from .kafka_sink import KafkaSink
 from .poll_state import PollState
 from .producer_like import ProducerLike
 from .replay import replay
-from .sink import KafkaSink
-from .sources import FeedRegistry, HttpClient
 from .task import PollResult
+from .weather_job import WeatherJob
 
 JOBS = ("station_status", "station_information", "weather")
 

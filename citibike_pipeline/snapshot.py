@@ -13,7 +13,9 @@ from typing import Callable, List, Optional
 import pyarrow as pa
 
 from .config import PipelineConfig
-from .metrics import Obs, StationStatus, station_state, window_metrics
+from .metrics import window_metrics
+from .obs import Obs
+from .station_condition import StationCondition, station_condition
 from .timeutil import epoch, floor_5min, from_epoch
 
 # The curated status columns a snapshot needs; `StatusRow.from_table` reads exactly these.
@@ -153,7 +155,7 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
     for sid, r in sorted(latest.items()):
         wm = window_metrics(obs[sid], as_of_s, cfg)
         age = int(as_of_s) - r.last_reported
-        state = station_state(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
+        state = station_condition(r.is_installed, r.is_renting, r.is_returning, age > stale_s,
                               r.num_bikes_available, r.num_docks_available)
         risk: Optional[str] = None
         if wm:
@@ -164,7 +166,7 @@ def compute_snapshot(rows: List[StatusRow], as_of: datetime, batch_id: str,
                 rate_per_min=wm.rate_per_min, docks_rate_per_min=wm.docks_rate_per_min,
                 minutes_to_empty=wm.minutes_to_empty, minutes_to_full=wm.minutes_to_full,
                 at_risk_empty=wm.at_risk_empty, at_risk_full=wm.at_risk_full, batch_id=batch_id))
-            if state == StationStatus.OK:
+            if state == StationCondition.OK:
                 risk = "EMPTY" if wm.at_risk_empty else ("FULL" if wm.at_risk_full else None)
         states.append(StationState(
             station_id=sid, station_name=r.station_name, lat=r.lat, lon=r.lon, capacity=r.capacity,

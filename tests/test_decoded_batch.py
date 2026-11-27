@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from citibike_contract import TOPIC_STATUS, TOPIC_WEATHER, Envelope, encode
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
-from citibike_pipeline.kafka_io import Record
+from citibike_pipeline.record import Record
 from citibike_pipeline.timeutil import from_epoch_ms
 
 CFG = PipelineConfig()

@@ -1,11 +1,12 @@
 """Window metrics by rate extrapolation (no ML). Pure functions over event time."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from enum import Enum
+from dataclasses import replace
 from typing import List, Optional, Sequence, TypeVar
 
 from .config import PipelineConfig
+from .obs import Obs
+from .window_metrics import WindowMetrics
 
 _N = TypeVar("_N", int, float)
 
@@ -18,28 +19,7 @@ def pct(sorted_vals: Sequence[_N], q: float) -> Optional[_N]:
     return sorted_vals[min(rank, len(sorted_vals) - 1)]
 
 
-@dataclass
-class Obs:
-    t: float      # observation time, epoch seconds (fetched_at)
-    bikes: int
-    docks: int
 
-@dataclass(frozen=True)
-class WindowMetrics:
-    window_start: float
-    n_obs: int
-    coverage_min: float
-    bikes_first: int
-    bikes_last: int
-    docks_first: int
-    docks_last: int
-    net_change: int
-    rate_per_min: Optional[float]
-    docks_rate_per_min: Optional[float]
-    minutes_to_empty: Optional[float]
-    minutes_to_full: Optional[float]
-    at_risk_empty: bool
-    at_risk_full: bool
 
 def window_metrics(obs: List[Obs], as_of: float, cfg: PipelineConfig) -> Optional[WindowMetrics]:
     start = as_of - cfg.window_minutes * 60
@@ -83,21 +63,4 @@ def window_metrics(obs: List[Obs], as_of: float, cfg: PipelineConfig) -> Optiona
     )
 
 
-class StationStatus(Enum):
-    OFFLINE = "OFFLINE"
-    STALE = "STALE"
-    EMPTY = "EMPTY"
-    FULL = "FULL"
-    OK = "OK"
 
-def station_state(is_installed: bool, is_renting: bool, is_returning: bool, is_stale: bool,
-                  bikes: int, docks: int) -> StationStatus:
-    if not (is_installed and is_renting and is_returning):
-        return StationStatus.OFFLINE
-    if is_stale:
-        return StationStatus.STALE
-    if bikes == 0:
-        return StationStatus.EMPTY
-    if docks == 0:
-        return StationStatus.FULL
-    return StationStatus.OK

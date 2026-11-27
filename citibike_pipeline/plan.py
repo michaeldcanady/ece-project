@@ -8,11 +8,7 @@ from datetime import datetime
 from citibike_contract import JsonObject
 
 from .jsonfields import as_int
-from .kafka_io import (
-    Ranges,
-    ranges_from_json,
-    ranges_to_json,
-)
+from .ranges import Ranges, ranges_from_json, ranges_to_json
 from .timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)

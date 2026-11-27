@@ -13,9 +13,10 @@ import pyarrow as pa
 
 from .batch_log import Counts
 from .config import PipelineConfig
-from .observations import Delivered, StationStatus
+from .delivered import Delivered
 from .rows import CuratedStatusRow
 from .station_information import StationInformation
+from .station_status import StationStatus
 from .timeutil import epoch, from_epoch_ms
 from .weather_reading import WeatherReading
 

@@ -8,8 +8,8 @@ from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.decoded_batch import DecodedBatch
 from citibike_pipeline.enrichment import PriorContext
 from citibike_pipeline.enrichment_context import EnrichmentContext
-from citibike_pipeline.kafka_io import Record
-from citibike_pipeline.storage import LocalStorage
+from citibike_pipeline.local_storage import LocalStorage
+from citibike_pipeline.record import Record
 
 CFG = PipelineConfig()
 BATCH_ID = "b1"

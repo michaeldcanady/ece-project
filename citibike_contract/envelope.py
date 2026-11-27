@@ -11,21 +11,8 @@ from datetime import datetime
 from typing import List, Mapping, Optional
 
 from citibike_contract import KNOWN_EVENT_TYPES, SCHEMA_VERSION, JsonObject, iso, parse_iso
-
-
-class InvalidEnvelope(ValueError):
-    """The bytes are not a valid envelope. `reasons` lists every failed check, as DLQ reason codes:
-    empty_value, invalid_json, not_object, bad_schema_version, unknown_event_type, missing_payload,
-    missing_poll_id, bad_fetched_at, bad_replayed_at. The message is the codes joined by commas."""
-
-    def __init__(self, reasons: List[str]) -> None:
-        super().__init__(",".join(reasons))
-        self.reasons = list(reasons)
-
-
-class MissingKafkaKey(ValueError):
-    """The envelope's payload lacks the id its Kafka key is made from (station_id or location_id).
-    Such an envelope cannot be sent: the producer skips it and logs why."""
+from citibike_contract.invalid_envelope import InvalidEnvelope
+from citibike_contract.missing_kafka_key import MissingKafkaKey
 
 
 @dataclass(frozen=True)

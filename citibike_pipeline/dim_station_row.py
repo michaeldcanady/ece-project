@@ -7,7 +7,7 @@ from typing import Optional
 
 from citibike_contract import Envelope
 
-from .kafka_io import Record
+from .record import Record
 from .station_information import StationInformation
 
 

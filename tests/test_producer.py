@@ -6,13 +6,15 @@ from typing import Protocol
 
 from citibike_contract import Envelope, encode, parse_iso
 from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
+from citibike_producer.feed_registry import parse_discovery
+from citibike_producer.fetch_result import FetchResult
+from citibike_producer.gbfs_station_job import GbfsStationJob
 from citibike_producer.job_state import JobState
-from citibike_producer.jobs import GbfsStationJob, WeatherJob
+from citibike_producer.kafka_sink import KafkaSink
 from citibike_producer.poll_state import PollState
 from citibike_producer.replay import replay
-from citibike_producer.sink import KafkaSink
-from citibike_producer.sources import FetchResult, parse_discovery
 from citibike_producer.tasks import poll_once, replay_capture
+from citibike_producer.weather_job import WeatherJob
 
 
 class _Producer(Protocol):
@@ -206,7 +208,7 @@ def test_malformed_body_is_parse_error():
 def test_a_station_without_an_id_is_skipped_logged_and_counted_in_the_poll_log(caplog):
     prod = FakeProducer()
     body = {"last_updated": 1, "version": "2.3", "data": {"stations": [{"num_bikes_available": 1}, station(1)]}}
-    with caplog.at_level(logging.WARNING, logger="citibike_producer.jobs"):
+    with caplog.at_level(logging.WARNING, logger="citibike_producer.gbfs_station_job"):
         assert make_job(FakeClient([ok_result(body)]), prod).run_once() is True
     assert [m[1] for m in by_topic(prod, TOPIC_STATUS)] == ["1"]
     poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]

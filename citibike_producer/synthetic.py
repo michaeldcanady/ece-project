@@ -16,9 +16,10 @@ from typing import Callable, List, MutableMapping, Optional, Sequence
 from citibike_contract import JsonObject, iso
 
 from .config import TOPIC_INFO, TOPIC_STATUS, Config
-from .jobs import GbfsStationJob, WeatherJob
-from .sink import KafkaSink
-from .sources import FetchResult
+from .fetch_result import FetchResult
+from .gbfs_station_job import GbfsStationJob
+from .kafka_sink import KafkaSink
+from .weather_job import WeatherJob
 
 URL_STATUS = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_status.json"
 URL_INFO = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_information.json"

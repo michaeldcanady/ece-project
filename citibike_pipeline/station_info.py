@@ -13,10 +13,12 @@ from . import lake
 from .config import TOPIC_INFO, PipelineConfig
 from .dim_station_build import DimStationBuild
 from .dim_station_row import DimStationRow
-from .kafka_io import KafkaBatchReader, ranges_to_json, total_messages
+from .kafka_batch_reader import KafkaBatchReader
+from .ranges import ranges_to_json, total_messages
 from .schemas import DIM_STATION, to_table
 from .station_information import StationInformation
-from .storage import Storage, put_parquet
+from .storage import Storage
+from .storage_ops import put_parquet
 from .timeutil import utcnow
 
 log = logging.getLogger(__name__)
