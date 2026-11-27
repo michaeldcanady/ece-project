@@ -36,11 +36,11 @@ class Delivered(Generic[T]):
     value: T
 
 
-def _is_int(x: object) -> bool:
+def is_int(x: object) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
-def _is_num(x: object) -> bool:
+def is_num(x: object) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
@@ -49,7 +49,7 @@ def _optional_count(payload: JsonObject, field: str, errors: List[str]) -> Optio
     if field not in payload:
         return None
     value = payload[field]
-    if not _is_int(value) or value < 0:
+    if not is_int(value) or value < 0:
         errors.append("bad_" + field)
         return None
     return value
@@ -80,7 +80,7 @@ class StationStatus:
         counts = {}
         for field in ("num_bikes_available", "num_docks_available"):
             value = payload.get(field)
-            if not _is_int(value) or value < 0:
+            if not is_int(value) or value < 0:
                 errors.append("bad_" + field)
             counts[field] = value
         ebikes = _optional_count(payload, "num_ebikes_available", errors)
@@ -94,7 +94,7 @@ class StationStatus:
         last_reported = payload.get("last_reported")
         if last_reported is None:
             errors.append("missing_last_reported")
-        elif not _is_int(last_reported) or last_reported < 0:
+        elif not is_int(last_reported) or last_reported < 0:
             errors.append("bad_last_reported")
         elif last_reported > fetched_s + future_skew_s:
             errors.append("last_reported_in_future")
@@ -129,10 +129,10 @@ class WeatherObservation:
         if not isinstance(current, dict):
             return Rejected(("missing_current",))
         errors = []
-        if not _is_num(current.get("time")):
+        if not is_num(current.get("time")):
             errors.append("bad_obs_time")
         temperature = current.get("temperature_2m")
-        if temperature is not None and not _is_num(temperature):
+        if temperature is not None and not is_num(temperature):
             errors.append("bad_temperature")
         if errors:
             return Rejected(tuple(errors))

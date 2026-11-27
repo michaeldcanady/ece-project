@@ -42,7 +42,7 @@ LAYER_MAP = {
     "citibike_pipeline.snapshot": "pipeline:core",
     "citibike_pipeline.timeutil": "pipeline:core",
     "citibike_pipeline.weather_reading": "pipeline:core",
-    "citibike_pipeline.validation": "pipeline:core",
+    "citibike_pipeline.station_information": "pipeline:core",
     # pipeline: infrastructure (Kafka, storage, the lake)
     "citibike_pipeline.batch_log": "pipeline:infrastructure",
     "citibike_pipeline.batch_log_entry": "pipeline:infrastructure",
@@ -64,6 +64,8 @@ LAYER_MAP = {
     "citibike_pipeline.quality": "pipeline:orchestration and entry",
     "citibike_pipeline.runtime": "pipeline:orchestration and entry",
     "citibike_pipeline.station_info": "pipeline:orchestration and entry",
+    "citibike_pipeline.dim_station_build": "pipeline:infrastructure",
+    "citibike_pipeline.dim_station_row": "pipeline:infrastructure",
     "citibike_pipeline.status": "pipeline:orchestration and entry",
     # producer
     "citibike_producer": "producer:sources and sink",

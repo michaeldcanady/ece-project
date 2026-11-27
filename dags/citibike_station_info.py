@@ -24,7 +24,7 @@ def citibike_station_info():
         from citibike_pipeline.station_info import build_dim_station
         cfg, storage = runtime.build()
         with runtime.open_reader(cfg) as reader:
-            return build_dim_station(reader, storage, cfg)
+            return build_dim_station(reader, storage, cfg).to_json()
 
     poll() >> build_dim()
 

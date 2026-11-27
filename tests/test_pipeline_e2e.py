@@ -289,7 +289,7 @@ def test_batch_log_holds_measured_values_not_constants(tmp_path, capture):
 def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     out = build_dim_station(reader, storage, cfg)
-    assert out["stations"] == 40
+    assert out.stations == 40
     dim = read_parquet(storage, lake.DIM_STATION_CURRENT).to_pylist()
     assert len(dim) == 40 and {"lat", "lon", "capacity"} <= set(dim[0])
     consumer.log[("citibike.station_info", 0)] = []

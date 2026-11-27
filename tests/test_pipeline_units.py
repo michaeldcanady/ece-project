@@ -10,8 +10,8 @@ from citibike_pipeline.decoded_batch import DecodedBatch
 from citibike_pipeline.kafka_io import Record
 from citibike_pipeline.metrics import Obs, station_state, window_metrics
 from citibike_pipeline.observations import Rejected, StationStatus, WeatherObservation
+from citibike_pipeline.station_information import StationInformation
 from citibike_pipeline.storage import LocalStorage, S3Storage
-from citibike_pipeline.validation import validate_station_info_payload
 
 CFG = PipelineConfig()
 NOW = 1_760_000_000.0
@@ -89,8 +89,12 @@ def test_weather_parse():
         ("bad_obs_time", "bad_temperature"))
 
 
-def test_other_payload_validators():
-    assert "bad_coordinates" in validate_station_info_payload({"station_id": "a", "lat": "x", "lon": 1})
+def test_station_information_parse():
+    assert StationInformation.parse({"station_id": "a", "lat": "x", "lon": 1}) == Rejected(("bad_coordinates",))
+    assert StationInformation.parse({"station_id": "", "lat": 1, "lon": 1, "capacity": 1.5}) == Rejected(
+        ("bad_station_id", "bad_capacity"))
+    assert StationInformation.parse({"station_id": "a", "lat": 1, "lon": 2, "region_id": 71}) == StationInformation(
+        "a", None, None, 1.0, 2.0, None, "71")
 
 
 def series(bikes, docks=None, step=30.0):

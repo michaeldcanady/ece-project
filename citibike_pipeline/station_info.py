@@ -3,29 +3,32 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from citibike_contract import InvalidEnvelope, decode
 
 from . import lake
 from .config import TOPIC_INFO, PipelineConfig
+from .dim_station_build import DimStationBuild
+from .dim_station_row import DimStationRow
 from .kafka_io import KafkaBatchReader, ranges_to_json, total_messages
 from .schemas import DIM_STATION, to_table
+from .station_information import StationInformation
 from .storage import Storage, put_parquet
 from .timeutil import utcnow
-from .validation import validate_station_info_payload
 
 log = logging.getLogger(__name__)
 
 
 def build_dim_station(reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
-                      now: Optional[datetime] = None) -> Dict[str, Any]:
+                      now: Optional[datetime] = None) -> DimStationBuild:
     now = now or utcnow()
     ranges = reader.plan([TOPIC_INFO], from_committed=False)      # whole topic: low -> high watermark
     records = reader.read(ranges, cfg.read_timeout_s) if ranges else []
 
-    latest: Dict[str, Dict[str, Any]] = {}
+    latest = {}   # station id -> its newest row
     rejected = 0
     for rec in records:                                           # offset order: last write per key wins
         try:
@@ -33,25 +36,19 @@ def build_dim_station(reader: KafkaBatchReader, storage: Storage, cfg: PipelineC
         except InvalidEnvelope:
             rejected += 1
             continue
-        p = env.payload
-        if env.event_type != "station_information" or validate_station_info_payload(p):
+        info = StationInformation.parse(env.payload) if env.event_type == "station_information" else None
+        if not isinstance(info, StationInformation):
             rejected += 1
             continue
-        latest[p["station_id"]] = {
-            "station_id": p["station_id"], "name": p.get("name"), "short_name": p.get("short_name"),
-            "lat": float(p["lat"]), "lon": float(p["lon"]), "capacity": p.get("capacity"),
-            "region_id": str(p["region_id"]) if p.get("region_id") is not None else None,
-            "feed_last_updated": env.feed_last_updated, "fetched_at": env.fetched_at,
-            "kafka_partition": rec.partition, "kafka_offset": rec.offset, "snapshot_at": now,
-        }
+        latest[info.station_id] = DimStationRow.from_delivered(info, env, rec, now)
     if not latest:
         # never replace a good dimension with an empty one
         raise RuntimeError("no valid station_information records (read %d, rejected %d)" % (len(records), rejected))
 
-    table = to_table(sorted(latest.values(), key=lambda r: r["station_id"]), DIM_STATION)
+    table = to_table([asdict(r) for _, r in sorted(latest.items())], DIM_STATION)
     snap_key = "curated/dim_station/snapshot_dt=%s/hr=%02d/dim_station.parquet" % (now.strftime("%Y-%m-%d"), now.hour)
     put_parquet(storage, snap_key, table)
     put_parquet(storage, lake.DIM_STATION_CURRENT, table)
     log.info("dim_station: %d stations from %d records (%d rejected)", len(latest), len(records), rejected)
-    return {"stations": len(latest), "records_read": len(records), "rejected": rejected,
-            "messages_planned": total_messages(ranges), "ranges": json.dumps(ranges_to_json(ranges))}
+    return DimStationBuild(stations=len(latest), records_read=len(records), rejected=rejected,
+                           messages_planned=total_messages(ranges), ranges=json.dumps(ranges_to_json(ranges)))
