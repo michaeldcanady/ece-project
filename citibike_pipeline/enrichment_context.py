@@ -16,8 +16,8 @@ from .storage import Storage
 
 __all__ = ["EnrichmentContext"]
 
-# The curated status columns the prior context reads; `PriorContext.from_table` uses these.
-_STATUS_CONTEXT_COLS = ["station_id", "fetched_at", "last_reported"]
+# The curated status columns `PriorContext.from_table` reads; `read_window` adds the event-time column itself.
+_STATUS_CONTEXT_COLS = ["station_id", "last_reported"]
 # How far before the Batch's first Station status the weather as-of join may look.
 _WEATHER_LOOKBACK = timedelta(hours=3)
 
