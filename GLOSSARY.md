@@ -52,11 +52,21 @@ _Avoid_: message, record (a record is what Kafka stores), observation row (that 
 The current weather at a location, parsed from a weather envelope's payload.
 _Avoid_: message, record, reading
 
+**Station information**:
+One station's fixed details (name, location, capacity), parsed from a station-information envelope's payload.
+The hourly build keeps the latest per station, and Enrichment attaches it to each Station status.
+_Avoid_: dimension, station metadata
+
 **Enrichment**:
 The step that turns a Batch's Station statuses into curated rows: it drops duplicate deliveries, flags repeats,
 out-of-order, stale and unknown-station observations, and attaches the station dimension and the latest weather
 at or before each observation. Pure: it reads no storage.
 _Avoid_: transform, processing
+
+**Quality report**:
+The daily summary of one UTC day's data health: poll outcomes per job, rejected envelopes by reason, and how
+stale, repeated and empty the station data was. Written as `report.json` and `report.md`.
+_Avoid_: data report, daily report
 
 **Kafka identity**:
 The (topic, partition, offset) triple that names the message a row came from; no two rows of a lake
