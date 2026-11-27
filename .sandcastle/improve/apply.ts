@@ -4,6 +4,7 @@ import * as os from "node:os";
 import { execFileSync } from "node:child_process";
 import { planSchema } from "./plan";
 import { CANDIDATE_LABEL, ensureCandidateLabels, strengthLabel } from "../shared/candidate-labels";
+import { filedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
 
 /**
@@ -46,11 +47,7 @@ for (const c of plan.candidates) {
     continue;
   }
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "issue-")), "body.md");
-  const next =
-    c.strength === "strong"
-      ? "This candidate is `strong`, so it is labeled `agent:implement` automatically."
-      : "Add the `agent:implement` label to have it implemented.";
-  fs.writeFileSync(file, `${c.body}\n\n---\nFiled by the nightly improve run. ${next}\n`);
+  fs.writeFileSync(file, filedBody(c.body, c.strength));
   const url = gh([
     "issue", "create",
     "--title", c.title,
