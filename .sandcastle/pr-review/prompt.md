@@ -29,9 +29,15 @@ Read the change with `git diff {{BASE_SHA}}...{{HEAD_SHA}}`. The working tree is
 
    Anything else is a **two-way door**, for example a refactor, tests, docs or a change to the pure core. When the
    call is unclear, choose one-way and say why.
-5. For each open thread below, check whether the current code addresses its concern. If it does, list it under
+5. Order findings by severity: correctness bugs first, then standards violations, then the rest. Do not drop a
+   finding to save space.
+6. For each open thread below, check whether the current code addresses its concern. If it does, list it under
    `resolved` with a one-sentence reply saying how. If it does not, leave it out.
 
 # OPEN THREADS FROM EARLIER REVIEWS
 
 {{OPEN_THREADS}}
+
+# WRITING STYLE
+
+{{WRITING_STYLE}}

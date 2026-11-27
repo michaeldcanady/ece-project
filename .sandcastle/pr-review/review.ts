@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import { claudeReviewAgent, exec, fail, required, writeJson } from "../shared/common";
+import { claudeReviewAgent, exec, fail, required, writeJson, writingStyle } from "../shared/common";
 import { runWithExtraction } from "../shared/run-with-extraction";
 import { alreadyReviewed } from "./review-actions";
 import { reviewContextSchema, type ReviewContext } from "./review-context";
@@ -47,6 +47,7 @@ try {
         BASE_SHA: context.baseSha,
         HEAD_SHA: context.headSha,
         OPEN_THREADS: renderThreads(context),
+        WRITING_STYLE: writingStyle(),
       },
       output: sandcastle.Output.object({ tag: "output", schema: reviewSchema }),
       extractionPrompt: fs.readFileSync(here("extraction.md"), "utf8"),

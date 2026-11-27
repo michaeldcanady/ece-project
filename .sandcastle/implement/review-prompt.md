@@ -25,3 +25,7 @@ Write a short markdown summary to `{{NOTES_FILE}}`: what you fixed, and what you
 reviewer, under the two headings **Standards** and **Spec**. It becomes part of the PR description.
 
 Output `<promise>COMPLETE</promise>` when done.
+
+# WRITING STYLE
+
+{{WRITING_STYLE}}

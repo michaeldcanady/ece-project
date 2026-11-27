@@ -65,3 +65,7 @@ const agentFor = (model: string) =>
 export const claudeAgent = () => agentFor(MODEL);
 
 export const claudeReviewAgent = () => agentFor(REVIEW_MODEL);
+
+/** The shared writing style, injected into every agent prompt as `{{WRITING_STYLE}}`. */
+export const writingStyle = (): string =>
+  fs.readFileSync(path.join(import.meta.dirname, "writing-style.md"), "utf8");
