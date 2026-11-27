@@ -3,8 +3,11 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 
-/** The model both workflows use; change it here only. */
-export const MODEL = "claude-opus-5-5";
+/** The model the spec, improve and implement passes use; change it here only. */
+export const MODEL = "claude-sonnet-5-5";
+
+/** The model the review passes use (implement's review pass and pr-review). Set to "claude-opus-5-5" to review with Opus. */
+export const REVIEW_MODEL = MODEL;
 
 export const outputDir = (): string => process.env.OUTPUT_DIR ?? "/tmp";
 
@@ -54,7 +57,11 @@ export const exec = (
 };
 
 /** The agent gets the OAuth token and nothing else: no GitHub credentials. */
-export const claudeAgent = () =>
-  sandcastle.claudeCode(MODEL, {
+const agentFor = (model: string) =>
+  sandcastle.claudeCode(model, {
     env: { CLAUDE_CODE_OAUTH_TOKEN: required("CLAUDE_CODE_OAUTH_TOKEN") },
   });
+
+export const claudeAgent = () => agentFor(MODEL);
+
+export const claudeReviewAgent = () => agentFor(REVIEW_MODEL);
