@@ -197,4 +197,12 @@ jobs:
     steps:
       - run: |
           queued=$(gh issue list --label agent:implement --state open --json number --jq length)
-          if [ "$queued" -gt 0 ]; then gh workflow run implement.yml; fi
+          # A run whose job was replaced as the pending run never started, yet reports `cancelled` too. Dispatching
+          # from it makes the next dispatch replace the pending run in turn, forever. So start a successor only if no
+          # other run is already queued, pending or running; this run's own `next` job is in_progress, hence `> 1`.
+          waiting=0
+          for s in queued pending in_progress; do
+            n=$(gh run list --workflow implement.yml --status "$s" --json databaseId --jq length)
+            waiting=$((waiting + n))
+          done
+          if [ "$queued" -gt 0 ] && [ "$waiting" -le 1 ]; then gh workflow run implement.yml; fi
