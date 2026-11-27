@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -137,6 +138,8 @@ def test_window_at_risk_names_empty_before_full():
     assert WindowMetrics.over(series([10] * 10 + [8] * 10 + [4] * 11), NOW, CFG).at_risk == "EMPTY"
     assert WindowMetrics.over(series([20] * 10 + [24] * 10 + [27] * 11), NOW, CFG).at_risk == "FULL"
     assert WindowMetrics.over(series([8] * 31), NOW, CFG).at_risk is None
+    both = replace(WindowMetrics.over(series([8] * 31), NOW, CFG), at_risk_empty=True, at_risk_full=True)
+    assert both.at_risk == "EMPTY"
 
 
 def test_station_state_precedence():
