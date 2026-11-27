@@ -23,7 +23,8 @@ import {
 const ISSUE_FILE = required("ISSUE_FILE"); // JSON from `gh issue view --json title,body,comments`
 const ISSUE_NUMBER = required("ISSUE_NUMBER");
 const BRANCH = required("BRANCH");
-const MAX_ITERATIONS = 5;
+// One agent iteration per pass; the recovery attempt is the next workflow run, which reads the failure comment.
+const ITERATIONS_PER_PASS = 1;
 
 const here = (file: string) => path.join(import.meta.dirname, file);
 
@@ -69,7 +70,8 @@ try {
   await sandcastle.run({
     ...common,
     name: `implement-#${ISSUE_NUMBER}`,
-    maxIterations: MAX_ITERATIONS,
+    // One attempt. A failed run gets one recovery run (see implement.yml), not more iterations here.
+    maxIterations: ITERATIONS_PER_PASS,
     promptFile: here("prompt.md"),
     promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, WRITING_STYLE: writingStyle() },
   });
@@ -86,7 +88,7 @@ try {
     ...common,
     agent: claudeReviewAgent(),
     name: `review-#${ISSUE_NUMBER}`,
-    maxIterations: 1,
+    maxIterations: ITERATIONS_PER_PASS,
     promptFile: here("review-prompt.md"),
     promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: notesFile, WRITING_STYLE: writingStyle() },
   });

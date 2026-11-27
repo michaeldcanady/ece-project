@@ -7,7 +7,8 @@ A markdown spec with exactly these sections, in this order:
 - `## Benefits`: in terms of locality and leverage, and how the tests improve.
 - `## Tests`: which existing tests survive unchanged, which are replaced, and what new test is written through the
   new interface.
-- `## Acceptance criteria`: a checklist, each item verifiable, ending with "`mise run check` passes".
+- `## Acceptance criteria`: a checklist, each item verifiable, ending with "`mise run check` passes". For a bug,
+  the first item is a failing test that reproduces it.
 - `## Out of scope`: what an implementer must not touch.
 
 The spec must obey `CODING_STANDARDS.md` and `.claude/rules/*` (strong types, one type per file, layered

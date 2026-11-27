@@ -1,25 +1,25 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { specSchema } from "./spec-plan";
 import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
 import { speccedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
+import { authorAssociation, autoImplement } from "./spec-labels";
+import { gh } from "../shared/gh";
+import { IMPLEMENT_LABEL, RECOVERED_LABEL, labelNames } from "../shared/labels";
 
 /**
  * Replace the issue body with the expanded spec, keeping the original note at the bottom, and label the issue a
  * candidate of the spec's strength. The only step with issue write access; the spec crossed a job boundary as an
- * artifact, so it is validated again here.
+ * artifact, so it is validated again here. A strong `request` also gets `agent:implement`, added with the PAT.
  */
-
-const gh = (args: string[]): string =>
-  execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 
 const issueFileSchema = z.object({
   body: z.string(),
-  labels: z.array(z.object({ name: z.string() })),
+  labels: labelNames,
+  authorAssociation,
 });
 
 const issue = required("ISSUE_NUMBER");
@@ -32,5 +32,15 @@ const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "spec-")), "body.md
 fs.writeFileSync(file, speccedBody(spec.body, spec.strength, current.body));
 
 ensureCandidateLabels(gh);
-gh(specEditArgs(issue, file, spec.strength, current.labels.map((l) => l.name)));
+const labels = current.labels;
+// A success spends the retry: a later failure gets its own recovery attempt.
+const recovered = labels.includes(RECOVERED_LABEL) ? ["--remove-label", RECOVERED_LABEL] : [];
+gh([...specEditArgs(issue, file, spec.strength, labels), ...recovered]);
 console.log(`Issue #${issue} now holds the full spec, labeled strength:${spec.strength}.`);
+
+// A strong human request goes straight to the implement queue; anything else waits for a human. The label is
+// added with the PAT, in its own call: an event caused by GITHUB_TOKEN would not start implement.yml.
+if (autoImplement(labels, spec.strength, current.authorAssociation)) {
+  gh(["issue", "edit", issue, "--add-label", IMPLEMENT_LABEL], required("AGENT_PAT"));
+  console.log(`Labeled #${issue} ${IMPLEMENT_LABEL}.`);
+}

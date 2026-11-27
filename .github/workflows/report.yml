@@ -1,0 +1,73 @@
+name: report
+
+# Weekly Factory report: issues filed, Factory PR outcomes, blocked issues, recovery and the one-way door share for
+# the last 7 days. It goes to the run summary and as a comment on the issue titled "Factory weekly report", which
+# the run creates if it is missing. No model runs, so there is no OAuth token.
+#
+# Same split as improve.yml: the read job holds only read permissions; a separate job with `issues: write` posts.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Monday 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: report
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .sandcastle
+      - name: Build the report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          OUTPUT_DIR: ${{ runner.temp }}/report
+        run: |
+          npx --prefix .sandcastle tsx .sandcastle/report/fetch.ts
+          cat "$OUTPUT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: ${{ runner.temp }}/report/report.md
+
+  post:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: report
+          path: ${{ runner.temp }}/report
+      # The title is fixed, so the issue is found by it; a search match is checked for an exact title.
+      - name: Comment on the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REPORT_FILE: ${{ runner.temp }}/report/report.md
+        run: |
+          set -euo pipefail
+          title="Factory weekly report"
+          number=$(gh issue list --state all --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | first | .number // empty")
+          if [ -z "$number" ]; then
+            url=$(gh issue create --title "$title" --body "Each week the Factory report is added here as a comment.")
+            number=${url##*/}
+          fi
+          gh issue comment "$number" --body-file "$REPORT_FILE"
