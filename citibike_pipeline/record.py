@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     pass
 
 
-
 @dataclass
 class Record:
     topic: str

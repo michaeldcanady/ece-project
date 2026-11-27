@@ -24,6 +24,7 @@ def default_args(retries: int, retry_delay: timedelta, execution_timeout: timede
 
 STATE_KEY = "producer_state"
 
+
 def run_poll(job: str, ti: "TaskInstanceLike") -> Mapping[str, Optional[str]]:
     """Poll one source once, carrying the producer's state between runs in XCom.
 

@@ -7,7 +7,6 @@ if TYPE_CHECKING:
     pass
 
 
-
 Ranges = Mapping[str, Mapping[int, Tuple[int, int]]]
 
 

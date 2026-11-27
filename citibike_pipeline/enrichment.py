@@ -44,8 +44,6 @@ class PriorContext:
         return cls(seen=frozenset(seen), max_last_reported=newest)
 
 
-
-
 def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorContext,
                   dimension: Optional[Mapping[str, StationInformation]], weather: Sequence[WeatherReading],
                   batch_id: str, processed_at: datetime, cfg: PipelineConfig) -> Tuple[List[CuratedStatusRow], Counts]:

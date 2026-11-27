@@ -27,25 +27,7 @@ GOLD_WINDOW = "gold/station_window_15m"
 GOLD_AVAILABILITY = "gold/system_availability_5m"
 
 
-
-# ---- hour partitions (also used by the batch logs) ------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---- lake tables ----------------------------------------------------------------------------
-
-
-
 
 RAW_STATUS = LakeTable("raw/station_status", RAW)
 RAW_WEATHER = LakeTable("raw/weather", RAW)
