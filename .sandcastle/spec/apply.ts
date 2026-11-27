@@ -1,26 +1,20 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { specSchema } from "./spec-plan";
 import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
 import { speccedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
-import { IMPLEMENT_LABEL, RECOVERED_LABEL, autoImplement } from "./spec-labels";
+import { autoImplement } from "./spec-labels";
+import { gh } from "../shared/gh";
+import { IMPLEMENT_LABEL, RECOVERED_LABEL } from "../shared/labels";
 
 /**
  * Replace the issue body with the expanded spec, keeping the original note at the bottom, and label the issue a
  * candidate of the spec's strength. The only step with issue write access; the spec crossed a job boundary as an
  * artifact, so it is validated again here. A strong `request` also gets `agent:implement`, added with the PAT.
  */
-
-const gh = (args: string[], token?: string): string =>
-  execFileSync("gh", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-    env: token === undefined ? process.env : { ...process.env, GH_TOKEN: token },
-  });
 
 const issueFileSchema = z.object({
   body: z.string(),

@@ -34,7 +34,8 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-      actions: write
+    outputs:
+      picked: ${{ steps.pick.outcome }}
     env:
       GH_REPO: ${{ github.repository }}
       MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
@@ -186,12 +187,21 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" --add-label agent:implement
           fi
 
-      # Drain the queue: runs are serialized, so start the next one while issues remain.
-      # Gated on the pick: a run that failed before it (checkout, install) would otherwise dispatch itself forever.
-      - if: always() && steps.pick.outcome == 'success'
-        name: Start the next run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
+  # Drain the queue: runs are serialized, so start the next one while issues remain. A separate job, so the agent job
+  # does not hold `actions: write`. Gated on the pick: a run that failed before it (checkout, install) would
+  # otherwise dispatch itself forever.
+  next:
+    needs: implement
+    if: always() && needs.implement.outputs.picked == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: read
+      actions: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - run: |
           queued=$(gh issue list --label agent:implement --state open --json number --jq length)
           if [ "$queued" -gt 0 ]; then gh workflow run implement.yml; fi

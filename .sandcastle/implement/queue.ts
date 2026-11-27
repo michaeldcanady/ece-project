@@ -1,3 +1,5 @@
+import { PRIORITY_HIGH_LABEL, REQUEST_LABEL } from "../shared/labels";
+
 /** One open issue labeled `agent:implement`, in the shape `gh issue list --json number,createdAt,labels` returns. */
 export interface QueuedIssue {
   number: number;
@@ -14,8 +16,8 @@ const has = (issue: QueuedIssue, label: string): boolean => issue.labels.some((l
 export const orderQueue = (issues: readonly QueuedIssue[]): QueuedIssue[] =>
   [...issues].sort(
     (a, b) =>
-      Number(has(b, "priority:high")) - Number(has(a, "priority:high")) ||
-      Number(has(b, "request")) - Number(has(a, "request")) ||
+      Number(has(b, PRIORITY_HIGH_LABEL)) - Number(has(a, PRIORITY_HIGH_LABEL)) ||
+      Number(has(b, REQUEST_LABEL)) - Number(has(a, REQUEST_LABEL)) ||
       Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
       a.number - b.number,
   );

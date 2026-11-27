@@ -1,4 +1,6 @@
 /** Turns fetched issues and PRs into the weekly Factory report. Pure: fetch.ts does the reading. */
+import { BLOCKED_LABEL, DOOR_ONE_WAY_LABEL, DOOR_TWO_WAY_LABEL, RECOVERED_LABEL, REQUEST_LABEL } from "../shared/labels";
+import { CANDIDATE_LABEL } from "../shared/candidate-labels";
 
 export interface Issue {
   readonly number: number;
@@ -16,7 +18,7 @@ export interface Pr {
   readonly createdAt: string;
 }
 
-export const WINDOW_DAYS = 7;
+const WINDOW_DAYS = 7;
 
 const BRANCH = /^agent\/issue-(\d+)/;
 
@@ -32,68 +34,91 @@ const percent = (part: number, whole: number): string =>
   whole === 0 ? "n/a" : `${Math.round((100 * part) / whole)}%`;
 
 export interface RecoveryCounts {
-  readonly ended: number;
+  readonly withPr: number;
   readonly blocked: number;
   readonly other: number;
 }
 
 /**
- * Where issues that carry `agent:recovered` stand now. `ended` has a merged or open Factory PR, `blocked` carries
+ * Where issues that carry `agent:recovered` stand now. `withPr` has a merged or open Factory PR, `blocked` carries
  * `agent:blocked` and has no such PR, `other` is everything else (still running, or its PR was closed unmerged).
  */
 export const recovery = (issues: readonly Issue[], prs: readonly Pr[], since: Date): RecoveryCounts => {
   const withPr = new Set(prs.filter((p) => p.state !== "CLOSED").flatMap((p) => factoryIssue(p) ?? []));
-  const recovered = issues.filter((i) => i.labels.includes("agent:recovered") && within(i.updatedAt, since));
-  const ended = recovered.filter((i) => withPr.has(i.number)).length;
-  const blocked = recovered.filter((i) => !withPr.has(i.number) && i.labels.includes("agent:blocked")).length;
-  return { ended, blocked, other: recovered.length - ended - blocked };
+  const recovered = issues.filter((i) => i.labels.includes(RECOVERED_LABEL) && within(i.updatedAt, since));
+  const withPrCount = recovered.filter((i) => withPr.has(i.number)).length;
+  const blocked = recovered.filter((i) => !withPr.has(i.number) && i.labels.includes(BLOCKED_LABEL)).length;
+  return { withPr: withPrCount, blocked, other: recovered.length - withPrCount - blocked };
 };
 
-export const buildReport = (issues: readonly Issue[], prs: readonly Pr[], now: Date): string => {
+interface Figures {
+  readonly since: Date;
+  readonly now: Date;
+  readonly human: number;
+  readonly scan: number;
+  readonly opened: number;
+  readonly merged: number;
+  readonly closed: number;
+  readonly open: number;
+  readonly oneWay: number;
+  readonly doorLabeled: number;
+  readonly blocked: readonly Issue[];
+  readonly recovery: RecoveryCounts;
+}
+
+const figures = (issues: readonly Issue[], prs: readonly Pr[], now: Date): Figures => {
   const since = new Date(now.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const filed = issues.filter((i) => within(i.createdAt, since));
-  const human = filed.filter((i) => i.labels.includes("request")).length;
-  const scan = filed.filter((i) => i.labels.includes("agent:candidate") && !i.labels.includes("request")).length;
-
   const factory = prs.filter((p) => factoryIssue(p) !== undefined && within(p.createdAt, since));
-  const merged = factory.filter((p) => p.state === "MERGED").length;
-  const closed = factory.filter((p) => p.state === "CLOSED").length;
-  const open = factory.filter((p) => p.state === "OPEN").length;
-  const oneWay = factory.filter((p) => p.labels.includes("door:one-way")).length;
-  const reviewed = factory.filter((p) => p.labels.includes("door:one-way") || p.labels.includes("door:two-way")).length;
+  const count = (kept: readonly Pr[], pred: (p: Pr) => boolean): number => kept.filter(pred).length;
+  return {
+    since,
+    now,
+    human: filed.filter((i) => i.labels.includes(REQUEST_LABEL)).length,
+    scan: filed.filter((i) => i.labels.includes(CANDIDATE_LABEL) && !i.labels.includes(REQUEST_LABEL)).length,
+    opened: factory.length,
+    merged: count(factory, (p) => p.state === "MERGED"),
+    closed: count(factory, (p) => p.state === "CLOSED"),
+    open: count(factory, (p) => p.state === "OPEN"),
+    oneWay: count(factory, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL)),
+    doorLabeled: count(factory, (p) => p.labels.includes(DOOR_ONE_WAY_LABEL) || p.labels.includes(DOOR_TWO_WAY_LABEL)),
+    blocked: issues.filter((i) => i.state === "OPEN" && i.labels.includes(BLOCKED_LABEL)),
+    recovery: recovery(issues, prs, since),
+  };
+};
 
-  const blocked = issues.filter((i) => i.state === "OPEN" && i.labels.includes("agent:blocked"));
-  const rec = recovery(issues, prs, since);
-  const recovered = rec.ended + rec.blocked + rec.other;
+const day = (d: Date): string => d.toISOString().slice(0, 10);
 
-  const day = (d: Date): string => d.toISOString().slice(0, 10);
+const render = (f: Figures): string => {
+  const rec = f.recovery;
+  const recovered = rec.withPr + rec.blocked + rec.other;
   return [
-    `## Factory weekly report, ${day(since)} to ${day(now)}`,
+    `## Factory weekly report, ${day(f.since)} to ${day(f.now)}`,
     "",
     "### Issues filed",
-    `- By humans (label \`request\`): ${human}`,
-    `- By the nightly scan (\`agent:candidate\` without \`request\`): ${scan}`,
+    `- By humans (label \`request\`): ${f.human}`,
+    `- By the nightly scan (\`agent:candidate\` without \`request\`): ${f.scan}`,
     "",
     "### Factory pull requests opened",
-    `- Opened (branch \`agent/issue-*\`): ${factory.length}`,
-    `- Merged: ${merged}`,
-    `- Closed unmerged: ${closed}`,
-    `- Still open: ${open}`,
+    `- Opened (branch \`agent/issue-*\`): ${f.opened}`,
+    `- Merged: ${f.merged}`,
+    `- Closed unmerged: ${f.closed}`,
+    `- Still open: ${f.open}`,
     "",
     "### Blocked now",
-    `- Open issues labeled \`agent:blocked\`: ${blocked.length}` +
-      (blocked.length === 0 ? "" : ` (${blocked.map((i) => `#${i.number}`).join(", ")})`),
+    `- Open issues labeled \`agent:blocked\`: ${f.blocked.length}` +
+      (f.blocked.length === 0 ? "" : ` (${f.blocked.map((i) => `#${i.number}`).join(", ")})`),
     "",
     "### Recovery (approximate)",
     `- Issues labeled \`agent:recovered\` and updated in the window: ${recovered}`,
-    `- With a merged or open Factory PR: ${rec.ended}`,
+    `- With a merged or open Factory PR: ${rec.withPr}`,
     `- Still blocked: ${rec.blocked}`,
     `- Other (running, or the PR closed unmerged): ${rec.other}`,
-    `- Recovery rate: ${percent(rec.ended, recovered)}`,
+    `- Recovery rate: ${percent(rec.withPr, recovered)}`,
     "",
     "### Review door",
-    `- PRs labeled \`door:one-way\`: ${oneWay} of ${factory.length} (${percent(oneWay, factory.length)})`,
-    `- PRs the reviewer has labeled either way: ${reviewed} of ${factory.length}`,
+    `- PRs labeled \`door:one-way\`: ${f.oneWay} of ${f.opened} (${percent(f.oneWay, f.opened)})`,
+    `- PRs the reviewer has labeled either way: ${f.doorLabeled} of ${f.opened}`,
     "",
     "### What is approximate",
     "- GitHub keeps no label history here, so recovery counts the label as it stands now. An issue whose label was removed is missed, and \"updated in the window\" stands in for \"recovered in the window\".",
@@ -102,3 +127,6 @@ export const buildReport = (issues: readonly Issue[], prs: readonly Pr[], now: D
     "",
   ].join("\n");
 };
+
+export const buildReport = (issues: readonly Issue[], prs: readonly Pr[], now: Date): string =>
+  render(figures(issues, prs, now));

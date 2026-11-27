@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { z } from "zod";
-import { RECOVERED_LABEL, SPEC_LABEL, recoveryAction } from "./spec-labels";
+import { recoveryAction } from "./spec-labels";
+import { gh } from "../shared/gh";
+import { RECOVERED_LABEL, SPEC_LABEL } from "../shared/labels";
 import { required } from "../shared/common";
 
 /**
@@ -8,13 +9,6 @@ import { required } from "../shared/common";
  * `agent:recovered` and re-adds `agent:spec` with the PAT (a label added with GITHUB_TOKEN starts no workflow);
  * a failure on an already recovered issue removes `agent:spec` and leaves the issue unchanged.
  */
-
-const gh = (args: string[], token?: string): string =>
-  execFileSync("gh", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-    env: token === undefined ? process.env : { ...process.env, GH_TOKEN: token },
-  });
 
 const issue = required("ISSUE_NUMBER");
 const runUrl = `${required("GITHUB_SERVER_URL")}/${required("GH_REPO")}/actions/runs/${required("GITHUB_RUN_ID")}`;

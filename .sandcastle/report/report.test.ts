@@ -79,7 +79,7 @@ test("recovery counts a merged or open PR as recovered and a PR closed unmerged 
     issue(4, ["agent:recovered"], { updatedAt: old }),
   ];
   const prs = [pr(10, "agent/issue-1-retry", "MERGED"), pr(11, "agent/issue-3", "CLOSED")];
-  assert.deepEqual(recovery(issues, prs, since), { ended: 1, blocked: 1, other: 1 });
+  assert.deepEqual(recovery(issues, prs, since), { withPr: 1, blocked: 1, other: 1 });
 });
 
 test("an empty week reports zeros and n/a, not NaN", () => {

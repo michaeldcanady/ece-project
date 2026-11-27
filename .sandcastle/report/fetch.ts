@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 import { gh } from "../pr-review/github-reads";
+import { outputDir } from "../shared/common";
 import { buildReport, type Issue, type Pr } from "./report";
 
 /** Reads issues and PRs with `gh` and writes report.md. No model runs here, so the job needs no secret. */
@@ -38,7 +39,7 @@ const prs: Pr[] = prsSchema.parse(
   JSON.parse(gh(["pr", "list", "--state", "all", "--limit", LIMIT, "--json", "number,state,headRefName,labels,createdAt"])),
 );
 
-const outDir = process.env.OUTPUT_DIR ?? ".";
+const outDir = outputDir();
 fs.mkdirSync(outDir, { recursive: true });
 const report = buildReport(issues, prs, new Date());
 fs.writeFileSync(path.join(outDir, "report.md"), report);
