@@ -59,7 +59,7 @@ _Avoid_: dimension, station metadata
 
 **Enrichment**:
 The step that turns a Batch's Station statuses into curated rows: it drops duplicate deliveries, flags repeats,
-out-of-order, stale and unknown-station observations, and attaches the station dimension and the latest weather
+out-of-order, stale and unknown-station observations, and attaches Station information and the latest weather
 at or before each observation. Pure: it reads no storage.
 _Avoid_: transform, processing
 
