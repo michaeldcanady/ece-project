@@ -22,9 +22,9 @@ class LakeHealth:
     last_batch_finished_min_ago: float
     data_as_of: datetime
     stations: int
-    share_empty: float
-    share_full: float
-    share_stale: float
+    share_empty: Optional[float]
+    share_full: Optional[float]
+    share_stale: Optional[float]
     at_risk_empty: int
     at_risk_full: int
     batches_last_24h: int
