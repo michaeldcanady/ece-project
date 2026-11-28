@@ -8,13 +8,14 @@ from citibike_contract import Envelope, encode, parse_iso
 from citibike_producer.config import TOPIC_INFO, TOPIC_POLL_LOG, TOPIC_STATUS, TOPIC_WEATHER, Config
 from citibike_producer.feed_registry import parse_discovery
 from citibike_producer.fetch_result import FetchResult
-from citibike_producer.gbfs_station_job import GbfsStationJob
+from citibike_producer.gbfs_feed import GbfsFeed
 from citibike_producer.job_state import JobState
 from citibike_producer.kafka_sink import KafkaSink
+from citibike_producer.poll import poll
 from citibike_producer.poll_state import PollState
 from citibike_producer.replay import replay
 from citibike_producer.tasks import poll_once, replay_capture
-from citibike_producer.weather_job import WeatherJob
+from citibike_producer.weather_feed import WeatherFeed
 
 
 class _Producer(Protocol):
@@ -75,16 +76,42 @@ class FakeRegistry:
         self.invalidated += 1
 
 
-def ok_result(body):
-    return FetchResult("ok", "https://example.test/x.json", "2026-10-20T14:00:00.000+00:00",
+def ok_result(body, url="https://example.test/x.json"):
+    return FetchResult("ok", url, "2026-10-20T14:00:00.000+00:00",
                        "2026-10-20T14:00:00.500+00:00", 200, 120, body)
 
 
-def make_job(client, producer: _Producer, cfg=None):
+class Poller:
+    """Runs polls of one source against one sink, carrying the state from poll to poll."""
+
+    def __init__(self, source, cfg, sink):
+        self.source, self.cfg, self.sink = source, cfg, sink
+        self.state = JobState()
+        self.last = None
+
+    def run_once(self) -> bool:
+        self.last = poll(self.source, self.state, self.cfg, self.sink)
+        self.state = self.last.state
+        return self.last.ok
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self.state.consecutive_failures
+
+
+def make_feed(client, cfg=None, registry=None):
     cfg = cfg or Config()
-    sink = KafkaSink(cfg, producer=producer)
-    job = GbfsStationJob(cfg, sink, client, FakeRegistry(), "station_status", "station_status", TOPIC_STATUS)
-    return job
+    return GbfsFeed(cfg, client, registry or FakeRegistry(), "station_status", "station_status", TOPIC_STATUS)
+
+
+def make_job(client, producer: _Producer, cfg=None, registry=None):
+    cfg = cfg or Config()
+    return Poller(make_feed(client, cfg, registry), cfg, KafkaSink(cfg, producer=producer))
+
+
+def weather_job(client, producer: _Producer, cfg=None):
+    cfg = cfg or Config()
+    return Poller(WeatherFeed(cfg, client), cfg, KafkaSink(cfg, producer=producer))
 
 
 def envelope(event_type, payload, poll_id="p0", fetched_at="2026-10-20T14:00:00.000+00:00"):
@@ -122,7 +149,7 @@ def test_status_poll_publishes_one_message_per_station_and_poll_log():
 
 def test_status_poll_writes_the_wire_bytes_unchanged():
     prod = FakeProducer()
-    job = make_job(FakeClient([ok_result(STATUS_BODY)]), prod)
+    job = make_job(FakeClient([ok_result(STATUS_BODY, "https://example.test/station_status.json")]), prod)
     job.run_once()
     poll_id = prod.sent[0][2]["poll_id"]
     assert prod.raw[0] == (
@@ -137,11 +164,11 @@ def test_replay_sends_each_envelope_under_the_key_the_live_job_used(tmp_path):
     cfg = Config(tee_path=str(tmp_path / "tee.jsonl.gz"))
     live = FakeProducer()
     sink = KafkaSink(cfg, producer=live)
-    info = GbfsStationJob(cfg, sink, FakeClient([ok_result(STATUS_BODY)]), FakeRegistry(),
-                          "station_information", "station_information", TOPIC_INFO)
-    info.run_once()
+    info = GbfsFeed(cfg, FakeClient([ok_result(STATUS_BODY)]), FakeRegistry(),
+                    "station_information", "station_information", TOPIC_INFO)
+    poll(info, JobState(), cfg, sink)
     weather_body = {"current": {"time": 1760000000, "interval": 900}}
-    WeatherJob(cfg, sink, FakeClient([ok_result(weather_body)])).run_once()
+    poll(WeatherFeed(cfg, FakeClient([ok_result(weather_body)])), JobState(), cfg, sink)
     sink.close()
     replayed = FakeProducer()
     replay(cfg.tee_path, KafkaSink(Config(), producer=replayed), Config(), threading.Event(), speed=0)
@@ -184,9 +211,9 @@ def test_http_failure_logs_and_counts_failures_and_resets_on_success():
 def test_404_triggers_rediscovery():
     prod = FakeProducer()
     nf = FetchResult("http_error", "u", "2026-10-20T14:00:00.000+00:00", http_status=404, error="HTTP 404")
-    job = make_job(FakeClient([nf]), prod)
-    job.run_once()
-    assert job.registry.invalidated == 1
+    registry = FakeRegistry()
+    make_job(FakeClient([nf]), prod, registry=registry).run_once()
+    assert registry.invalidated == 1
 
 
 def test_kafka_delivery_failure_is_reported_and_not_marked_seen():
@@ -208,7 +235,7 @@ def test_malformed_body_is_parse_error():
 def test_a_station_without_an_id_is_skipped_logged_and_counted_in_the_poll_log(caplog):
     prod = FakeProducer()
     body = {"last_updated": 1, "version": "2.3", "data": {"stations": [{"num_bikes_available": 1}, station(1)]}}
-    with caplog.at_level(logging.WARNING, logger="citibike_producer.gbfs_station_job"):
+    with caplog.at_level(logging.WARNING, logger="citibike_producer.poll"):
         assert make_job(FakeClient([ok_result(body)]), prod).run_once() is True
     assert [m[1] for m in by_topic(prod, TOPIC_STATUS)] == ["1"]
     poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]
@@ -222,13 +249,23 @@ def test_weather_job():
     body = {"latitude": 40.75, "longitude": -73.98,
             "current_units": {"temperature_2m": "°C"},
             "current": {"time": 1760000000, "interval": 900, "temperature_2m": 14.2, "precipitation": 0.0}}
-    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result(body), ok_result(body)]))
+    job = weather_job(FakeClient([ok_result(body), ok_result(body)]), prod, cfg)
     assert job.run_once() is True
     msg = by_topic(prod, TOPIC_WEATHER)[0]
     assert msg[1] == cfg.weather_location_id
     assert msg[2]["payload"]["current"]["temperature_2m"] == 14.2 and msg[2]["feed_last_updated"] == 1760000000
     job.run_once()
     assert len(by_topic(prod, TOPIC_WEATHER)) == 1   # unchanged observation skipped
+
+
+def test_a_weather_observation_without_a_time_is_published_not_skipped():
+    prod = FakeProducer()
+    cfg = Config()
+    body = {"current": {"time": None, "interval": 900, "temperature_2m": 14.2}}
+    job = weather_job(FakeClient([ok_result(body)]), prod, cfg)
+    assert job.run_once() is True
+    assert len(by_topic(prod, TOPIC_WEATHER)) == 1
+    assert by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]["outcome"] == "ok"
 
 
 DISCOVERY_BODY = {"version": "2.3", "data": {"en": {"feeds": [
@@ -345,9 +382,7 @@ def test_tee_writes_gzip_jsonl(tmp_path):
     cfg = Config(tee_path=str(tmp_path / "tee.jsonl.gz"))
     prod = FakeProducer()
     sink = KafkaSink(cfg, producer=prod)
-    job = GbfsStationJob(cfg, sink, FakeClient([ok_result(STATUS_BODY)]), FakeRegistry(),
-                         "station_status", "station_status", TOPIC_STATUS)
-    job.run_once()
+    Poller(make_feed(FakeClient([ok_result(STATUS_BODY)]), cfg), cfg, sink).run_once()
     sink.close()
     with gzip.open(cfg.tee_path, "rt") as fh:
         lines = [json.loads(x) for x in fh]
@@ -392,7 +427,7 @@ def test_a_station_item_that_is_not_an_object_is_skipped():
 def test_weather_poll_is_keyed_by_the_configured_location_id():
     prod = FakeProducer()
     cfg = Config(weather_location_id="nyc-central-park")
-    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result({"current": {"time": 1760000000}})]))
+    job = weather_job(FakeClient([ok_result({"current": {"time": 1760000000}})]), prod, cfg)
     assert job.run_once() is True
     (msg,) = by_topic(prod, TOPIC_WEATHER)
     assert msg[1] == "nyc-central-park"
@@ -402,7 +437,7 @@ def test_weather_poll_is_keyed_by_the_configured_location_id():
 def test_a_weather_poll_without_a_location_id_sends_nothing_and_is_a_parse_error():
     prod = FakeProducer()
     cfg = Config(weather_location_id="")
-    job = WeatherJob(cfg, KafkaSink(cfg, producer=prod), FakeClient([ok_result({"current": {"time": 1760000000}})]))
+    job = weather_job(FakeClient([ok_result({"current": {"time": 1760000000}})]), prod, cfg)
     assert job.run_once() is False
     assert by_topic(prod, TOPIC_WEATHER) == []
     poll = by_topic(prod, TOPIC_POLL_LOG)[-1][2]["payload"]
@@ -424,3 +459,80 @@ def test_poll_state_survives_json_and_reads_the_shape_already_in_xcom():
 def test_missing_or_malformed_poll_state_starts_fresh():
     for bad in (None, [], "x", {"job": 7, "discovery": {"urls": {}}}, {"job": {"consecutive_failures": "n"}}):
         assert PollState.from_json(bad) == PollState()
+
+
+class FakeSource:
+    """A source that is neither GBFS nor weather: payloads are {"id": ...} objects keyed by TOPIC_STATUS rules."""
+
+    job = "fake"
+    source = "fake_source"
+    event_type = "station_status"
+    topic = TOPIC_STATUS
+
+    def __init__(self, results, payloads, skips_keyless_envelopes=True, last_updated=100):
+        self.results = list(results)
+        self.payloads = payloads
+        self.skips_keyless_envelopes = skips_keyless_envelopes
+        self.last_updated = last_updated
+
+    def fetch(self):
+        return self.results.pop(0)
+
+    def read(self, res):
+        from citibike_producer.feed_read import FeedRead
+        from citibike_producer.unreadable_feed import UnreadableFeed
+        if res.body is None:
+            raise UnreadableFeed("no body")
+        return FeedRead(self.last_updated, 5, "9", self.payloads)
+
+
+def run_fake(source, state=None, producer=None):
+    cfg = Config()
+    prod = producer or FakeProducer()
+    return poll(source, state or JobState(), cfg, KafkaSink(cfg, producer=prod)), prod
+
+
+def test_poll_sends_one_keyed_envelope_per_payload_then_the_poll_log():
+    src = FakeSource([ok_result({})], [{"station_id": "a"}, {"station_id": "b"}])
+    result, prod = run_fake(src)
+    assert result.ok and result.state == JobState(100, 0)
+    assert [(m[0], m[1]) for m in prod.sent] == [(TOPIC_STATUS, "a"), (TOPIC_STATUS, "b"), (TOPIC_POLL_LOG, "fake")]
+    assert prod.sent[0][2]["source"] == "fake_source" and prod.sent[0][2]["gbfs_version"] == "9"
+    assert prod.sent[2][2]["payload"]["n_records"] == 2
+
+
+def test_poll_skips_keyless_envelopes_or_fails_by_the_sources_rule():
+    payloads = [{"x": 1}, {"station_id": "a"}]
+    result, prod = run_fake(FakeSource([ok_result({})], payloads, skips_keyless_envelopes=True))
+    assert result.ok and [m[1] for m in by_topic(prod, TOPIC_STATUS)] == ["a"]
+    assert by_topic(prod, TOPIC_POLL_LOG)[0][2]["payload"]["messages_skipped"] == 1
+    result, prod = run_fake(FakeSource([ok_result({})], payloads, skips_keyless_envelopes=False),
+                            JobState(7, 0))
+    assert not result.ok and result.outcome == "parse_error" and result.state == JobState(7, 1)
+    assert by_topic(prod, TOPIC_STATUS) == []
+    assert by_topic(prod, TOPIC_POLL_LOG)[0][2]["payload"]["messages_skipped"] == 2
+
+
+def test_a_failed_poll_counts_the_failure_and_keeps_last_feed_updated():
+    bad = FetchResult("timeout", "u", "2026-10-20T14:00:00.000+00:00", error="read timeout")
+    result, _ = run_fake(FakeSource([bad], []), JobState(5, 1))
+    assert not result.ok and result.error == "read timeout" and result.state == JobState(5, 2)
+
+
+def test_an_unreadable_feed_is_a_parse_error_with_its_message():
+    empty = FetchResult("ok", "u", "2026-10-20T14:00:00.000+00:00", "2026-10-20T14:00:00.500+00:00")
+    result, prod = run_fake(FakeSource([empty], []))
+    assert result.outcome == "parse_error" and result.error == "no body" and result.state == JobState(None, 1)
+    assert by_topic(prod, TOPIC_POLL_LOG)[0][2]["payload"]["error"] == "no body"
+
+
+def test_a_missing_discovery_url_is_a_discovery_error_with_an_empty_source_url():
+    class NoUrl(FakeRegistry):
+        def url_for(self, name):
+            return None
+    prod = FakeProducer()
+    job = make_job(FakeClient([]), prod, registry=NoUrl())
+    assert job.run_once() is False
+    msg = by_topic(prod, TOPIC_POLL_LOG)[0][2]
+    assert msg["source_url"] == "" and msg["payload"]["outcome"] == "discovery_error"
+    assert msg["payload"]["error"] == "feed url unavailable from discovery"

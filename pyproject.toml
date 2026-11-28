@@ -17,7 +17,7 @@ citibike-status = "citibike_pipeline.status:main"
 [dependency-groups]
 # Everything runs in the Airflow image, which provides pyarrow/boto3 pinned by Airflow's constraints.
 # They are dev-only here so the libraries can be tested locally.
-dev = ["pytest>=7", "pyarrow>=11", "boto3>=1.28", "moto[s3]>=4.2", "ruff>=0.6", "mypy>=1.14"]
+dev = ["pytest>=7", "pyarrow>=14", "boto3>=1.28", "moto[s3]>=4.2", "ruff>=0.6", "mypy>=1.14"]
 
 [build-system]
 requires = ["hatchling"]

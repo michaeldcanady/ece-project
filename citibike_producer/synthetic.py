@@ -17,9 +17,11 @@ from citibike_contract import JsonObject, iso
 
 from .config import TOPIC_INFO, TOPIC_STATUS, Config
 from .fetch_result import FetchResult
-from .gbfs_station_job import GbfsStationJob
+from .gbfs_feed import GbfsFeed
+from .job_state import JobState
 from .kafka_sink import KafkaSink
-from .weather_job import WeatherJob
+from .poll import poll
+from .weather_feed import WeatherFeed
 
 URL_STATUS = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_status.json"
 URL_INFO = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_information.json"
@@ -128,10 +130,10 @@ def generate(path: str, stations: int = 40, minutes: int = 45, start: Optional[d
     sink = KafkaSink(cfg, producer=_NullProducer())
     reg = _Registry()
 
-    status = GbfsStationJob(cfg, sink, _Client(clock, lambda t: {
+    status = GbfsFeed(cfg, _Client(clock, lambda t: {
         "last_updated": int(t.timestamp()), "ttl": 5, "version": "2.3",
         "data": {"stations": sim.stations(t, t0)}}), reg, "station_status", "station_status", TOPIC_STATUS)
-    info = GbfsStationJob(cfg, sink, _Client(clock, lambda t: {
+    info = GbfsFeed(cfg, _Client(clock, lambda t: {
         "last_updated": int(t.timestamp()), "ttl": 60, "version": "2.3",
         "data": {"stations": sim.info()}}), reg, "station_information", "station_information", TOPIC_INFO)
 
@@ -142,16 +144,17 @@ def generate(path: str, stations: int = 40, minutes: int = 45, start: Optional[d
                             "relative_humidity_2m": 60, "precipitation": 0.0, "rain": 0.0, "snowfall": 0.0,
                             "weather_code": 3, "cloud_cover": 90, "wind_speed_10m": 11.5}}
 
-    weather = WeatherJob(cfg, sink, _Client(clock, weather_body))
-    info.run_once()
-    weather.run_once()
+    weather = WeatherFeed(cfg, _Client(clock, weather_body))
+    info_state, weather_state, status_state = JobState(), JobState(), JobState()
+    info_state = poll(info, info_state, cfg, sink).state
+    weather_state = poll(weather, weather_state, cfg, sink).state
     for k in range(minutes * 60 // STATUS_INTERVAL_S):       # one station_status poll per DAG run
         elapsed = k * STATUS_INTERVAL_S
         clock.now = t0 + timedelta(seconds=elapsed)
         sim.step(elapsed)
-        status.run_once()
+        status_state = poll(status, status_state, cfg, sink).state
         if elapsed and elapsed % WEATHER_INTERVAL_S == 0:
-            weather.run_once()
+            weather_state = poll(weather, weather_state, cfg, sink).state
     sink.close()
     return path
 

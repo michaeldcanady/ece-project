@@ -197,4 +197,15 @@ jobs:
     steps:
       - run: |
           queued=$(gh issue list --label agent:implement --state open --json number --jq length)
-          if [ "$queued" -gt 0 ]; then gh workflow run implement.yml; fi
+          # A run whose job was replaced as the pending run never started, yet reports `cancelled` too. Dispatching
+          # from it makes each dispatch replace the pending run in turn, forever. So defer to any other run that will
+          # still dispatch: one queued or pending, or one running that is newer than this one (its own `next` job
+          # follows). Older running runs are only their `next` jobs, finishing, so they do not count; counting them
+          # would let two overlapping `next` jobs each see the other and stall the queue. The newest run dispatches.
+          # Known gap: a newer run that fails before the pick (checkout, install) has its `next` job skipped, so this
+          # run's deferral to it dispatches nothing and queued issues wait for the next `agent:implement` label event.
+          # Accepted: telling such a run apart needs a jobs lookup per run, and the stall is bounded, unlike the loop.
+          others=$(gh run list --workflow implement.yml --limit 50 --json databaseId,status --jq \
+            "[.[] | select(.status != \"completed\" and .databaseId != $GITHUB_RUN_ID
+              and (.status != \"in_progress\" or .databaseId > $GITHUB_RUN_ID))] | length")
+          if [ "$queued" -gt 0 ] && [ "$others" -eq 0 ]; then gh workflow run implement.yml; fi

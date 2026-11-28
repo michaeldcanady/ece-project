@@ -6,9 +6,9 @@ import { specSchema } from "./spec-plan";
 import { ensureCandidateLabels, specEditArgs } from "../shared/candidate-labels";
 import { speccedBody } from "../shared/candidate-issue";
 import { required } from "../shared/common";
-import { authorAssociation, autoImplement } from "./spec-labels";
+import { authorAssociation, autoImplement, staleMarkArgs } from "./spec-labels";
 import { gh } from "../shared/gh";
-import { IMPLEMENT_LABEL, RECOVERED_LABEL, labelNames } from "../shared/labels";
+import { IMPLEMENT_LABEL, labelNames } from "../shared/labels";
 
 /**
  * Replace the issue body with the expanded spec, keeping the original note at the bottom, and label the issue a
@@ -33,9 +33,9 @@ fs.writeFileSync(file, speccedBody(spec.body, spec.strength, current.body));
 
 ensureCandidateLabels(gh);
 const labels = current.labels;
-// A success spends the retry: a later failure gets its own recovery attempt.
-const recovered = labels.includes(RECOVERED_LABEL) ? ["--remove-label", RECOVERED_LABEL] : [];
-gh([...specEditArgs(issue, file, spec.strength, labels), ...recovered]);
+// A success spends the retry and lifts a block: a later failure gets its own recovery attempt.
+const staleMarks = staleMarkArgs(labels);
+gh([...specEditArgs(issue, file, spec.strength, labels), ...staleMarks]);
 console.log(`Issue #${issue} now holds the full spec, labeled strength:${spec.strength}.`);
 
 // A strong human request goes straight to the implement queue; anything else waits for a human. The label is
