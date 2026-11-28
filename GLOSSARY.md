@@ -89,35 +89,6 @@ A run against the running stack's real data that reprocesses Kafka's retained me
 reports, per check, whether the cleaning and the serving files hold. It reads the live lake and never writes it.
 _Avoid_: smoke test, integration test (the in-memory run over a synthetic capture is the end-to-end test)
 
-## Service level
-
-**Service failure**:
-A station that cannot serve a rider right now: it has no bike to rent, no dock to return to, or is offline.
-_Avoid_: outage, empty station (EMPTY is one cause of a failure, not the whole set)
-
-**At risk**:
-A station that still works but is projected to become empty or full within the risk horizon. An early warning,
-not yet a Service failure.
-_Avoid_: failing, critical
-
-**Service level**:
-The share of all stations that can both rent and return a bike right now: online, with at least one bike and
-one free dock. At-risk stations count as served; they are reported beside it, not inside it.
-_Avoid_: availability (that names the separate shares of stations with a bike or with a dock), uptime
-
-**Area**:
-A roughly one-kilometre cell of the map grouping nearby stations, used to rank where Service failures
-concentrate. Not an administrative region.
-_Avoid_: region (the station feed's region code is too coarse to rank), neighbourhood, zone
-
-**Rebalance**:
-Moving bikes by crew from stations or Areas with a surplus to those with a shortage.
-_Avoid_: redistribution, restocking
-
-**Risk horizon**:
-How far ahead, in minutes, a station's trend is projected when deciding whether it is At risk.
-_Avoid_: forecast window, lookahead
-
 ## The wire contract
 
 **Envelope**:
