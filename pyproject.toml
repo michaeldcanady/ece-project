@@ -34,10 +34,38 @@ target-version = "py39"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["F", "E", "W", "B", "I", "UP"]
+select = ["F", "E", "W", "B", "I", "UP", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR1702"]
+# PLR1702 is a preview rule. explicit-preview-rules enables only the preview rules selected by exact code.
+preview = true
+explicit-preview-rules = true
 # House style: typing.Optional/List and %-formatting (Airflow 2.7 and the producer image run Python 3.9).
 # Any and Dict are banned by scripts/check_strong_types.py (see CODING_STANDARDS.md).
 ignore = ["UP006", "UP007", "UP031", "UP035", "UP045"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 5
+max-branches = 12
+max-returns = 6
+max-statements = 30
+max-nested-blocks = 3
+
+[tool.ruff.lint.per-file-ignores]
+# Baseline of existing violations. This list may only shrink: split a function, then delete its entry.
+"citibike_contract/envelope.py" = ["C901"]
+"citibike_pipeline/batch.py" = ["PLR0913"]
+"citibike_pipeline/enrichment.py" = ["PLR0913", "PLR0915"]
+"citibike_pipeline/kafka_batch_reader.py" = ["C901", "PLR0915", "PLR1702"]
+"citibike_pipeline/station_state.py" = ["PLR0913"]
+"citibike_producer/broker.py" = ["C901", "PLR0915"]
+"citibike_producer/replay.py" = ["PLR0913"]
+"scripts/check_layers.py" = ["PLR1702"]
+"scripts/check_strong_types.py" = ["PLR1702"]
+"tests/**" = ["PLR0913"]
+"tests/e2e_live/__main__.py" = ["PLR0915"]
+"tests/e2e_live/reprocess.py" = ["PLR1702"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["citibike_contract", "citibike_producer", "citibike_pipeline"]
