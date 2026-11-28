@@ -71,3 +71,8 @@ def _weak(source: str) -> List[str]:
 def test_nested_quoted_weak_names_are_flagged() -> None:
     assert _weak("def f(x: List['dict']) -> None: ...") == ["dict"]
     assert _weak("x: Optional['Any'] = None") == ["Any"]
+
+
+def test_annotated_metadata_is_not_a_type() -> None:
+    assert _uses("def f(x: Annotated[int, 'object']) -> None: ...") == []
+    assert _uses("def f(x: Annotated[Sequence[object], 'meta']) -> None: ...") == [1]

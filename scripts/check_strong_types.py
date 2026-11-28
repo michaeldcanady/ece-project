@@ -37,7 +37,9 @@ OBJECT_BASELINE: Mapping[str, int] = {
     "citibike_pipeline/serving.py": 1,
     "citibike_pipeline/status.py": 3,
     "citibike_pipeline/storage_ops.py": 1,
+    "citibike_producer/feed_read.py": 1,
     "citibike_producer/jsonvalues.py": 1,
+    "citibike_producer/poll.py": 1,
     "citibike_producer/producer_like.py": 3,
     "citibike_producer/station_feed.py": 1,
     "citibike_producer/synthetic.py": 5,
@@ -47,12 +49,24 @@ OBJECT_BASELINE: Mapping[str, int] = {
 }
 
 
-def _is_literal(node: ast.AST) -> bool:
+def _subscript_of(node: ast.AST, name: str) -> bool:
     if not isinstance(node, ast.Subscript):
         return False
     base = node.value
-    return (isinstance(base, ast.Name) and base.id == "Literal") or (
-        isinstance(base, ast.Attribute) and base.attr == "Literal")
+    return (isinstance(base, ast.Name) and base.id == name) or (isinstance(base, ast.Attribute) and base.attr == name)
+
+
+def _is_literal(node: ast.AST) -> bool:
+    return _subscript_of(node, "Literal")
+
+
+def _children(node: ast.expr) -> List[ast.expr]:
+    """The parts of an annotation that are types. `Annotated[T, meta...]` has one: T, the rest is metadata."""
+    if _subscript_of(node, "Annotated") and isinstance(node, ast.Subscript):
+        inner = node.slice
+        first = inner.elts[0] if isinstance(inner, ast.Tuple) and inner.elts else inner
+        return [first, node.value]
+    return [c for c in ast.iter_child_nodes(node) if isinstance(c, ast.expr)]
 
 
 TypeName = Union[ast.Name, ast.Attribute]
@@ -78,7 +92,7 @@ def _type_names(annotation: Optional[ast.expr], line: Optional[int] = None) -> I
                 continue
             yield from _type_names(inner, at)
             continue
-        pending.extend(c for c in ast.iter_child_nodes(n) if isinstance(c, ast.expr))
+        pending.extend(_children(n))
 
 
 def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Tuple[str, int]]:
