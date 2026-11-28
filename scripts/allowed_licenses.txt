@@ -1,0 +1,11 @@
+# SPDX ids of the licenses that dependencies may use, one per line.
+# A new dependency under any other license fails `mise run lint`. Add an id only after review.
+MIT
+BSD-2-Clause
+BSD-3-Clause
+Apache-2.0
+PSF-2.0
+ISC
+# Weak copyleft: allowed only for certifi and pathspec, which the project uses unmodified. MPL-2.0 obliges a
+# publisher to share changes to the MPL files themselves, and the project changes neither package.
+MPL-2.0
