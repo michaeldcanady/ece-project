@@ -82,16 +82,21 @@ def _object_uses(tree: ast.AST) -> List[int]:
     """Line of each `object` in an annotation or type alias, except a bare parameter annotation."""
     lines: List[int] = []
 
-    def scan(annotation: Optional[ast.expr]) -> None:
+    def scan(annotation: Optional[ast.expr], line: Optional[int] = None) -> None:
         if annotation is None:
             return
-        line = annotation.lineno          # a quoted annotation parses with lines relative to its string
-        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-            try:
-                annotation = ast.parse(annotation.value, mode="eval").body
-            except SyntaxError:
-                return
-        lines.extend(line for n in ast.walk(annotation) if _is_object(n))
+        for n in ast.walk(annotation):
+            if not isinstance(n, (ast.Name, ast.Constant)):
+                continue
+            at = line if line is not None else n.lineno   # a quoted annotation's own lines are relative to its string
+            if _is_object(n):
+                lines.append(at)
+            elif isinstance(n, ast.Constant) and isinstance(n.value, str):     # `"object"`, `List["object"]`
+                try:
+                    inner = ast.parse(n.value, mode="eval").body
+                except SyntaxError:
+                    continue
+                scan(inner, at)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
@@ -134,13 +139,14 @@ def object_uses(path: str) -> List[int]:
         return _object_uses(ast.parse(fh.read(), filename=path))
 
 
-def object_failures(counts: Mapping[str, int], baseline: Mapping[str, int]) -> List[str]:
+def object_failures(uses: Mapping[str, List[int]], baseline: Mapping[str, int]) -> List[str]:
     failures = []
-    for path in sorted(set(counts) | set(baseline)):
-        found, allowed = counts.get(path, 0), baseline.get(path, 0)
+    for path in sorted(set(uses) | set(baseline)):
+        lines = uses.get(path, [])
+        found, allowed = len(lines), baseline.get(path, 0)
         if found > allowed:
-            failures.append("%s: %d use(s) of `object` as a type, %d allowed; name the real type or write a dataclass"
-                            % (path, found, allowed))
+            failures.append("%s: %d use(s) of `object` as a type, %d allowed (lines %s); name the real type or write "
+                            "a dataclass" % (path, found, allowed, ", ".join(str(n) for n in lines)))
         elif found < allowed:
             failures.append("%s: %d use(s) of `object` left, %d allowed; lower OBJECT_BASELINE to %d"
                             % (path, found, allowed, found))
@@ -150,12 +156,12 @@ def object_failures(counts: Mapping[str, int], baseline: Mapping[str, int]) -> L
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     failed = False
-    counts: MutableMapping[str, int] = {}
+    uses_by_path: MutableMapping[str, List[int]] = {}
     for path in sorted(python_files(root)):
         uses = object_uses(os.path.join(root, path))
         if uses:
-            counts[path] = len(uses)
-    for failure in object_failures(counts, OBJECT_BASELINE):
+            uses_by_path[path] = uses
+    for failure in object_failures(uses_by_path, OBJECT_BASELINE):
         failed = True
         print(failure)
     for path in sorted(python_files(root)):

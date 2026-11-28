@@ -39,8 +39,19 @@ def test_quoted_object_annotation_is_rejected() -> None:
     assert _uses("def f() -> 'Mapping[str, object]': ...") == [1]
 
 
+def test_object_in_a_nested_string_is_rejected() -> None:
+    assert _uses("def f(x: List['object']) -> None: ...") == [1]
+    assert _uses("def f(x: Optional['object']) -> None: ...") == [1]
+    assert _uses("def f(x: List['Mapping[str, object]']) -> None: ...") == [1]
+
+
+def test_quoted_use_reports_the_file_line() -> None:
+    assert _uses("\n\ndef f(x: List['object']) -> None: ...") == [3]
+
+
 def test_baseline_may_only_shrink() -> None:
-    assert cst.object_failures({"a.py": 2}, {"a.py": 2}) == []
-    assert "1 allowed" in cst.object_failures({"a.py": 2}, {"a.py": 1})[0]
-    assert "lower OBJECT_BASELINE" in cst.object_failures({"a.py": 1}, {"a.py": 2})[0]
-    assert cst.object_failures({"new.py": 1}, {})
+    assert cst.object_failures({"a.py": [1, 2]}, {"a.py": 2}) == []
+    assert "1 allowed" in cst.object_failures({"a.py": [1, 2]}, {"a.py": 1})[0]
+    assert "lines 4, 9" in cst.object_failures({"a.py": [4, 9]}, {"a.py": 1})[0]
+    assert "lower OBJECT_BASELINE" in cst.object_failures({"a.py": [1]}, {"a.py": 2})[0]
+    assert cst.object_failures({"new.py": [7]}, {})
