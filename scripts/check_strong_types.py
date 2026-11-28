@@ -118,9 +118,19 @@ def _is_object(node: Optional[ast.AST]) -> bool:
     return isinstance(node, ast.Name) and node.id == "object"
 
 
-def _is_alias_target(node: ast.Assign) -> bool:
-    """`Name = Mapping[str, object]`: a CapWords name, the convention for a type alias."""
-    return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()
+GENERIC_BUILTINS = frozenset({"dict", "list", "tuple", "set", "frozenset", "type"})
+
+
+def _is_alias(node: ast.Assign) -> bool:
+    """`Name = Mapping[str, object]`: a CapWords name assigned a subscript of a generic, not a data lookup such as
+    `Kind = payload["object"]`. A generic is a CapWords name (`Mapping`, `typing.List`) or a builtin one (`dict`)."""
+    if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()):
+        return False
+    if not isinstance(node.value, ast.Subscript):
+        return False
+    base = node.value.value
+    name = base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else ""
+    return name[:1].isupper() or name in GENERIC_BUILTINS
 
 
 def _object_uses(tree: ast.AST) -> List[int]:
@@ -133,9 +143,9 @@ def _object_uses(tree: ast.AST) -> List[int]:
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
             scan(node.annotation)
-            if isinstance(node.value, ast.Subscript) and "TypeAlias" in ast.dump(node.annotation):
-                scan(node.value)                                # `X: TypeAlias = Mapping[str, object]`
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript) and _is_alias_target(node):
+            if "TypeAlias" in ast.dump(node.annotation) and isinstance(node.value, (ast.Subscript, ast.Constant)):
+                scan(node.value)                  # `X: TypeAlias = Mapping[str, object]`, or the same in quotes
+        elif isinstance(node, ast.Assign) and _is_alias(node):
             scan(node.value)                                    # `X = Mapping[str, object]`
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scan(node.returns)
