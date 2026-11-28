@@ -53,19 +53,8 @@ max-statements = 30
 max-nested-blocks = 3
 
 [tool.ruff.lint.per-file-ignores]
-# Baseline of existing violations. This list may only shrink: split a function, then delete its entry.
-"citibike_contract/envelope.py" = ["C901"]
-"citibike_pipeline/batch.py" = ["PLR0913"]
-"citibike_pipeline/enrichment.py" = ["PLR0913", "PLR0915"]
-"citibike_pipeline/kafka_batch_reader.py" = ["C901", "PLR0915", "PLR1702"]
-"citibike_pipeline/station_state.py" = ["PLR0913"]
-"citibike_producer/broker.py" = ["C901", "PLR0915"]
-"citibike_producer/replay.py" = ["PLR0913"]
-"scripts/check_layers.py" = ["PLR1702"]
-"scripts/check_strong_types.py" = ["PLR1702"]
-"tests/**" = ["PLR0913"]
-"tests/e2e_live/__main__.py" = ["PLR0915"]
-"tests/e2e_live/reprocess.py" = ["PLR1702"]
+# tests have long fixtures and builders; the limits apply to the code under test.
+"tests/**" = ["PLR0913", "PLR0915", "PLR1702"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["citibike_contract", "citibike_producer", "citibike_pipeline"]

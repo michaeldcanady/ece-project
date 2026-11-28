@@ -50,7 +50,7 @@ def capture_files(path: str) -> List[str]:
     return [path]
 
 
-def replay(path: str, sink: KafkaSink, cfg: Config, stop: threading.Event, speed: float = 1.0,
+def replay(path: str, sink: KafkaSink, cfg: Config, stop: threading.Event, speed: float = 1.0,  # noqa: PLR0913
            max_gap_s: float = 5.0, loop: bool = False) -> int:
     """Republish captured envelopes in event-time order (files of a capture directory are merged).
 

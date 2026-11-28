@@ -178,7 +178,7 @@ def batch_latencies(storage: Storage, plan: Plan, stats: Stats,
             for f, r in zip(t["fetched_at"].to_pylist(), t["replayed_at"].to_pylist())]
 
 
-def finalize_batch(plan: Plan, stats: Stats, published: Published,
+def finalize_batch(plan: Plan, stats: Stats, published: Published,  # noqa: PLR0913
                    reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                    now: Optional[datetime] = None) -> None:
     """Write the Batch log entry, then commit the plan's offsets, last of all."""

@@ -35,7 +35,7 @@ class StationState:
     batch_id: str
 
 
-def station_state(is_installed: bool, is_renting: bool, is_returning: bool, is_stale: bool,
+def station_state(is_installed: bool, is_renting: bool, is_returning: bool, is_stale: bool,  # noqa: PLR0913
                   bikes: int, docks: int) -> StateName:
     if not (is_installed and is_renting and is_returning):
         return "OFFLINE"

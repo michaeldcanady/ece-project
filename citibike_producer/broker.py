@@ -42,7 +42,7 @@ def missing_topics(consumer: Consumer, timeout_s: float = 10.0) -> List[str]:
     return [t for t in REQUIRED_TOPICS if t not in existing]
 
 
-def peek(consumer: Consumer, topic: str, count: int, newest: bool = False, timeout_s: float = 10.0) -> List[Message]:
+def peek(consumer: Consumer, topic: str, count: int, newest: bool = False, timeout_s: float = 10.0) -> List[Message]:  # noqa: C901, PLR0915
     """Up to `count` messages from each partition: the oldest, or the newest with `newest`."""
     from confluent_kafka import TopicPartition
 
