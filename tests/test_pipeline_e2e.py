@@ -298,7 +298,8 @@ def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
     consumer.log[("citibike.station_info", 0)] = []
     with pytest.raises(RuntimeError):
         build_dim_station(reader, storage, cfg)
-    assert len(StationInformationTable().current(storage) or {}) == 40   # not overwritten
+    after = StationInformationTable().current(storage)
+    assert after is not None and len(after) == 40   # not overwritten
 
 
 HOUR = START                       # 12:00, an hour several batches write into
