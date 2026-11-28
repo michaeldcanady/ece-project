@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Mapping
+
+from citibike_contract.json_value import JsonObject
 
 
 @dataclass(frozen=True)
@@ -13,5 +14,5 @@ class DimStationBuild:
     messages_planned: int
     ranges: str     # the planned offset ranges as JSON
 
-    def to_json(self) -> Mapping[str, object]:
+    def to_json(self) -> JsonObject:
         return asdict(self)

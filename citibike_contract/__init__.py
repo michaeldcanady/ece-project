@@ -6,10 +6,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Mapping, Optional
 
+from citibike_contract.json_value import JsonObject as JsonObject
+from citibike_contract.json_value import JsonValue as JsonValue
+
 SCHEMA_VERSION = 1
 
-# A JSON object read off the wire or about to go on it: string keys, values still unparsed.
-JsonObject = Mapping[str, object]
 
 TOPIC_STATUS = "citibike.station_status"
 TOPIC_INFO = "citibike.station_info"

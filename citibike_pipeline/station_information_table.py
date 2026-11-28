@@ -1,7 +1,7 @@
 """The Station information table: the latest row per station, with its keys, write and read in one place."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping, Optional, Sequence
 
@@ -24,7 +24,7 @@ class StationInformationTable:
         """Write the snapshot copy and the current table. Raises ValueError on no rows, leaving current as is."""
         if not rows:
             raise ValueError("refusing to replace the station information table with an empty one")
-        table = to_table([asdict(r) for r in sorted(rows, key=lambda r: r.station_id)], DIM_STATION)
+        table = to_table([r for r in sorted(rows, key=lambda r: r.station_id)], DIM_STATION)
         put_parquet(storage, _snapshot_key(snapshot_at), table)
         put_parquet(storage, _CURRENT, table)
 

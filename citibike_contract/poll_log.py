@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import List, Literal, Mapping, Optional, get_args
 
+from citibike_contract.json_value import JsonObject
+
 Outcome = Literal[
     "ok", "skipped_unchanged", "timeout", "connection_error", "http_error", "parse_error", "kafka_error",
     "discovery_error",
@@ -64,7 +66,7 @@ class PollLog:
     def ok(self) -> bool:
         return is_success(self.outcome)
 
-    def to_payload(self) -> Mapping[str, object]:
+    def to_payload(self) -> JsonObject:
         return asdict(self)
 
     @staticmethod

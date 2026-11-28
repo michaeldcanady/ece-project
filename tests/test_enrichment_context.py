@@ -10,6 +10,7 @@ from citibike_pipeline.enrichment import PriorContext
 from citibike_pipeline.enrichment_context import EnrichmentContext
 from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.record import Record
+from citibike_pipeline.rows import CuratedStatusRow, CuratedWeatherRow
 
 CFG = PipelineConfig()
 BATCH_ID = "b1"
@@ -51,19 +52,23 @@ def decode(records):
 
 def prior_status(fetched_at, last_reported, offset, batch_id="b0", station_id="a"):
     """A curated status row an earlier batch wrote; only the columns the reads touch carry meaning."""
-    return {"station_id": station_id, "fetched_at": fetched_at, "last_reported": last_reported,
-            "num_bikes_available": 1, "num_docks_available": 1, "is_installed": True, "is_renting": True,
-            "is_returning": True, "age_s": 0, "is_stale": False, "is_repeat": False, "is_out_of_order": False,
-            "is_unknown_station": False, "poll_id": "p0", "replay": False, "kafka_topic": TOPIC_STATUS,
-            "kafka_partition": 1, "kafka_offset": offset, "batch_id": batch_id, "processed_at": PROCESSED_AT}
+    return CuratedStatusRow(
+        station_id=station_id, fetched_at=fetched_at, last_reported=last_reported, feed_last_updated=None,
+        num_bikes_available=1, num_ebikes_available=None, num_docks_available=1, num_bikes_disabled=None,
+        num_docks_disabled=None, is_installed=True, is_renting=True, is_returning=True, age_s=0, is_stale=False,
+        is_repeat=False, is_out_of_order=False, is_unknown_station=False, station_name=None, lat=None, lon=None,
+        capacity=None, temperature_c=None, precipitation_mm=None, weather_code=None, wind_speed_kmh=None,
+        poll_id="p0", replay=False, replayed_at=None, kafka_topic=TOPIC_STATUS, kafka_partition=1,
+        kafka_offset=offset, kafka_timestamp=None, batch_id=batch_id, processed_at=PROCESSED_AT)
 
 
 def prior_weather(fetched_at, offset, batch_id="b0"):
     """A curated weather row an earlier batch wrote, observed at its fetch time."""
-    return {"location_id": "nyc", "obs_time": fetched_at, "fetched_at": fetched_at, "temperature_c": 10.0,
-            "precipitation_mm": 0.0, "weather_code": 2, "wind_speed_kmh": 5.0, "poll_id": "p0",
-            "kafka_topic": TOPIC_WEATHER, "kafka_partition": 1, "kafka_offset": offset, "batch_id": batch_id,
-            "processed_at": PROCESSED_AT}
+    return CuratedWeatherRow(
+        location_id="nyc", obs_time=fetched_at, fetched_at=fetched_at, temperature_c=10.0, relative_humidity=None,
+        precipitation_mm=0.0, rain_mm=None, snowfall_cm=None, weather_code=2, cloud_cover=None, wind_speed_kmh=5.0,
+        poll_id="p0", kafka_topic=TOPIC_WEATHER, kafka_partition=1, kafka_offset=offset, batch_id=batch_id,
+        processed_at=PROCESSED_AT)
 
 
 def obs_times(context):

@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 
 from citibike_contract import JsonObject
 
+from .jsonfields import as_int
 from .jsonnumbers import is_int
 from .rejected import Rejected
 
@@ -71,8 +72,8 @@ class StationStatus:
             errors.append("last_reported_in_future")
         if errors:
             return Rejected(tuple(errors))
-        return cls(station_id=str(station_id), last_reported=int(last_reported),
-                   num_bikes_available=int(counts["num_bikes_available"]),
-                   num_docks_available=int(counts["num_docks_available"]),
+        return cls(station_id=str(station_id), last_reported=as_int(last_reported),
+                   num_bikes_available=as_int(counts["num_bikes_available"]),
+                   num_docks_available=as_int(counts["num_docks_available"]),
                    num_ebikes_available=ebikes, num_bikes_disabled=bikes_disabled,
                    num_docks_disabled=docks_disabled, **flags)

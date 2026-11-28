@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from citibike_contract import JsonObject
+
 from .config import TOPIC_WEATHER, Config
 from .feed_read import FeedRead
 from .fetch_result import FetchResult
@@ -48,7 +50,7 @@ class WeatherFeed:
         current = body.get("current")
         if not isinstance(current, Mapping) or "time" not in current:
             raise UnreadableFeed("current block missing")
-        payload = {
+        payload: JsonObject = {
             "location_id": self.cfg.weather_location_id,
             "requested_latitude": self.cfg.weather_lat,
             "requested_longitude": self.cfg.weather_lon,

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, List, Mapping, MutableMapping, Optional, Sequence
+from typing import TYPE_CHECKING, Iterable, List, MutableMapping, Optional, Sequence
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -19,6 +19,9 @@ from .hour_partitions import floor_hour, hour_from_key, hours_between, part_key,
 from .schemas import TS, to_table
 from .storage import Storage
 from .storage_ops import put_parquet, read_parquet
+
+if TYPE_CHECKING:
+    from .table_row import TableRow
 
 log = logging.getLogger(__name__)
 
@@ -60,14 +63,14 @@ class LakeTable:
 
     # -- write --
 
-    def write(self, storage: Storage, batch_id: str, rows: Sequence[Mapping[str, object]]) -> List[datetime]:
+    def write(self, storage: Storage, batch_id: str, rows: Sequence[TableRow]) -> List[datetime]:
         """Write a batch's rows, one file per event-time hour, and return those hours.
 
         Overwrite-safe: a retry of the same batch rewrites the same files. If compaction has merged the
         batch's earlier files meanwhile, reads and the next compaction drop the duplicate rows."""
-        groups: MutableMapping[datetime, List[Mapping[str, object]]] = {}
+        groups: MutableMapping[datetime, List[TableRow]] = {}
         for r in rows:
-            groups.setdefault(floor_hour(r[_EVENT_TIME]), []).append(r)
+            groups.setdefault(floor_hour(getattr(r, _EVENT_TIME)), []).append(r)
         for hour, rs in sorted(groups.items()):
             put_parquet(storage, self._batch_key(hour, batch_id), to_table(rs, self.schema))
         return sorted(groups)
