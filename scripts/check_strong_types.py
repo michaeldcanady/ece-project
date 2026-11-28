@@ -47,19 +47,45 @@ OBJECT_BASELINE: Mapping[str, int] = {
 }
 
 
-def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Union[ast.Name, ast.Attribute]]:
+def _is_literal(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Subscript):
+        return False
+    base = node.value
+    return (isinstance(base, ast.Name) and base.id == "Literal") or (
+        isinstance(base, ast.Attribute) and base.attr == "Literal")
+
+
+TypeName = Union[ast.Name, ast.Attribute]
+
+
+def _type_names(annotation: Optional[ast.expr], line: Optional[int] = None) -> Iterator[Tuple[TypeName, int]]:
+    """Each Name and Attribute in an annotation with its line, including those inside quoted parts such as
+    `List["dict"]`. The strings inside `Literal[...]` are values, not types, and are skipped."""
     if annotation is None:
         return
-    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):   # quoted annotation
-        try:
-            annotation = ast.parse(annotation.value, mode="eval").body
-        except SyntaxError:
-            return
-    for node in ast.walk(annotation):
-        if isinstance(node, ast.Name) and node.id in WEAK:
-            yield node
-        elif isinstance(node, ast.Attribute) and node.attr in WEAK:
-            yield node
+    pending: List[ast.expr] = [annotation]
+    while pending:
+        n = pending.pop()
+        if _is_literal(n):
+            continue
+        at = line if line is not None else getattr(n, "lineno", 0)   # a quoted annotation's lines are relative
+        if isinstance(n, (ast.Name, ast.Attribute)):
+            yield n, at
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            try:
+                inner = ast.parse(n.value, mode="eval").body
+            except SyntaxError:
+                continue
+            yield from _type_names(inner, at)
+            continue
+        pending.extend(c for c in ast.iter_child_nodes(n) if isinstance(c, ast.expr))
+
+
+def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Tuple[str, int]]:
+    for node, line in _type_names(annotation):
+        name = node.id if isinstance(node, ast.Name) else node.attr
+        if name in WEAK:
+            yield name, line
 
 
 def _annotations(tree: ast.AST) -> Iterator[Optional[ast.expr]]:
@@ -78,33 +104,25 @@ def _is_object(node: Optional[ast.AST]) -> bool:
     return isinstance(node, ast.Name) and node.id == "object"
 
 
+def _is_alias_target(node: ast.Assign) -> bool:
+    """`Name = Mapping[str, object]`: a CapWords name, the convention for a type alias."""
+    return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()
+
+
 def _object_uses(tree: ast.AST) -> List[int]:
     """Line of each `object` in an annotation or type alias, except a bare parameter annotation."""
     lines: List[int] = []
 
-    def scan(annotation: Optional[ast.expr], line: Optional[int] = None) -> None:
-        if annotation is None:
-            return
-        for n in ast.walk(annotation):
-            if not isinstance(n, (ast.Name, ast.Constant)):
-                continue
-            at = line if line is not None else n.lineno   # a quoted annotation's own lines are relative to its string
-            if _is_object(n):
-                lines.append(at)
-            elif isinstance(n, ast.Constant) and isinstance(n.value, str):     # `"object"`, `List["object"]`
-                try:
-                    inner = ast.parse(n.value, mode="eval").body
-                except SyntaxError:
-                    continue
-                scan(inner, at)
+    def scan(annotation: Optional[ast.expr]) -> None:
+        lines.extend(line for node, line in _type_names(annotation) if _is_object(node))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
             scan(node.annotation)
-            if isinstance(node.value, ast.Subscript):          # `X: TypeAlias = Mapping[str, object]`
-                scan(node.value)
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript):   # `X = Mapping[str, object]`
-            scan(node.value)
+            if isinstance(node.value, ast.Subscript) and "TypeAlias" in ast.dump(node.annotation):
+                scan(node.value)                                # `X: TypeAlias = Mapping[str, object]`
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript) and _is_alias_target(node):
+            scan(node.value)                                    # `X = Mapping[str, object]`
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scan(node.returns)
             a = node.args
@@ -119,9 +137,8 @@ def violations(path: str) -> List[Tuple[int, str]]:
         tree = ast.parse(fh.read(), filename=path)
     found = []
     for annotation in _annotations(tree):
-        for node in _weak_names(annotation):
-            name = node.id if isinstance(node, ast.Name) else node.attr
-            found.append((getattr(annotation, "lineno", 0), name))
+        for name, line in _weak_names(annotation):
+            found.append((line, name))
     return sorted(found)
 
 

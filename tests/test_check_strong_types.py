@@ -55,3 +55,19 @@ def test_baseline_may_only_shrink() -> None:
     assert "lines 4, 9" in cst.object_failures({"a.py": [4, 9]}, {"a.py": 1})[0]
     assert "lower OBJECT_BASELINE" in cst.object_failures({"a.py": [1]}, {"a.py": 2})[0]
     assert cst.object_failures({"new.py": [7]}, {})
+
+
+def test_string_subscripts_that_are_not_types_are_not_flagged() -> None:
+    assert _uses("kind = payload['object']") == []
+    assert _uses("Mode = Literal['object']") == []
+    assert _uses("def f(x: Literal['object']) -> None: ...") == []
+
+
+def _weak(source: str) -> List[str]:
+    tree = ast.parse(source)
+    return [name for a in cst._annotations(tree) for name, _ in cst._weak_names(a)]
+
+
+def test_nested_quoted_weak_names_are_flagged() -> None:
+    assert _weak("def f(x: List['dict']) -> None: ...") == ["dict"]
+    assert _weak("x: Optional['Any'] = None") == ["Any"]
