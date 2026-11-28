@@ -71,7 +71,7 @@ def poll(source: PollSource, state: JobState, cfg: Config, sink: KafkaSink) -> P
         except MissingKafkaKey as exc:
             if not source.skips_keyless_envelopes:
                 return _finish(run, OUTCOME_PARSE, read, PollDelivery(DeliveryBatch(), len(read.payloads)), str(exc))
-            log.warning("%s: skipping a station: %s", source.job, exc)
+            log.warning("%s: skipping an item: %s", source.job, exc)
             skipped += 1
     return _finish_delivered(run, read, _publish(run, keyed, skipped))
 
