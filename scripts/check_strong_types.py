@@ -118,19 +118,24 @@ def _is_object(node: Optional[ast.AST]) -> bool:
     return isinstance(node, ast.Name) and node.id == "object"
 
 
-GENERIC_BUILTINS = frozenset({"dict", "list", "tuple", "set", "frozenset", "type"})
+GENERICS = frozenset({
+    "dict", "list", "tuple", "set", "frozenset", "type",
+    "Mapping", "MutableMapping", "Sequence", "MutableSequence", "List", "Tuple", "Set", "FrozenSet", "Iterable",
+    "Iterator", "Collection", "Callable", "Optional", "Union", "Type", "Awaitable", "Generator", "AsyncIterator",
+    "Annotated", "ClassVar", "Final", "Required", "NotRequired",
+})
 
 
 def _is_alias(node: ast.Assign) -> bool:
     """`Name = Mapping[str, object]`: a CapWords name assigned a subscript of a generic, not a data lookup such as
-    `Kind = payload["object"]`. A generic is a CapWords name (`Mapping`, `typing.List`) or a builtin one (`dict`)."""
+    `Kind = payload["object"]`. A generic is one of GENERICS, so `Kind = Config["object"]` is a lookup too."""
     if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()):
         return False
     if not isinstance(node.value, ast.Subscript):
         return False
     base = node.value.value
     name = base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else ""
-    return name[:1].isupper() or name in GENERIC_BUILTINS
+    return name in GENERICS
 
 
 def _object_uses(tree: ast.AST) -> List[int]:

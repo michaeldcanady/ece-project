@@ -83,6 +83,7 @@ def test_capwords_data_lookup_is_not_a_type_alias() -> None:
     assert _uses("Row = rows['object']") == []
     assert _uses("Row = Mapping[str, object]") == [1]
     assert _uses("Row = dict[str, object]") == [1]
+    assert _uses("Kind = Config['object']") == []
 
 
 def test_quoted_type_alias_is_scanned() -> None:
