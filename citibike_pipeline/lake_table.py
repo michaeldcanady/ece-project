@@ -7,7 +7,7 @@ listed file gone re-reads the whole hour."""
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterable, List, MutableMapping, Optional, Sequence
 
@@ -70,7 +70,7 @@ class LakeTable:
         batch's earlier files meanwhile, reads and the next compaction drop the duplicate rows."""
         groups: MutableMapping[datetime, List[TableRow]] = {}
         for r in rows:
-            groups.setdefault(floor_hour(asdict(r)[_EVENT_TIME]), []).append(r)
+            groups.setdefault(floor_hour(getattr(r, _EVENT_TIME)), []).append(r)
         for hour, rs in sorted(groups.items()):
             put_parquet(storage, self._batch_key(hour, batch_id), to_table(rs, self.schema))
         return sorted(groups)
