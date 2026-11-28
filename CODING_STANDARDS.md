@@ -5,7 +5,11 @@ Read during review. Each rule says what good looks like; `mise run lint` already
 ## Strong types
 
 Every value gets its exact type, or a custom class written for it. `scripts/check_strong_types.py` rejects
-`Any`, `typing.Dict` and the builtin `dict` in annotations, in every file. `scripts/check_mypy.py` runs mypy with a per-file error baseline that only shrinks, so
+`Any`, `typing.Dict` and the builtin `dict` in annotations, in every file. It also rejects `object` as a
+stand-in for them (`Mapping[str, object]`, `List[object]`, an `object` return, an alias of either); `object` is
+allowed only as a bare parameter annotation at a parser's entry (`def from_json(obj: object)`). Files that predate the
+rule are in `OBJECT_BASELINE` and may only go down. Swapping `Any` for `object` meets the check and not the rule:
+it is a finding in review, and the fix is the exact type or a dataclass. `scripts/check_mypy.py` runs mypy with a per-file error baseline that only shrinks, so
 annotations are checked against the code that uses them. Review for what the checks cannot see:
 
 - **Records are classes.** A value with named fields (a parsed JSON object, a step record, a function's
