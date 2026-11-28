@@ -103,7 +103,10 @@ def value_sanity(storage: Storage, future_skew_s: int) -> List[CheckResult]:
 
 
 def station_dimension(storage: Storage) -> List[CheckResult]:
-    dim = StationInformationTable().current(storage) or {}
+    current = StationInformationTable().current(storage)
+    if current is None:
+        return [CheckResult("5a the station dimension is not empty", False, "the station dimension table is missing")]
+    dim = current
     t = read_all(storage, "curated/station_status", ["is_unknown_station", "station_name"])
     unknown = pc.sum(t["is_unknown_station"].cast("int64")).as_py() or 0
     known_unnamed = pc.sum(pc.and_(pc.invert(t["is_unknown_station"]), pc.is_null(t["station_name"]))
