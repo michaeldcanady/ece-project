@@ -34,7 +34,7 @@ target-version = "py39"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["F", "E", "W", "B", "I", "UP", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR1702"]
+select = ["F", "E", "W", "B", "I", "UP", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR1702", "RUF100"]
 # PLR1702 is a preview rule. explicit-preview-rules enables only the preview rules selected by exact code.
 preview = true
 explicit-preview-rules = true
@@ -54,7 +54,7 @@ max-nested-blocks = 3
 
 [tool.ruff.lint.per-file-ignores]
 # tests have long fixtures and builders; the limits apply to the code under test.
-"tests/**" = ["PLR0913", "PLR0915", "PLR1702"]
+"tests/**" = ["PLR0913", "PLR0915", "PLR1702", "RUF100"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["citibike_contract", "citibike_producer", "citibike_pipeline"]

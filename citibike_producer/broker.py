@@ -105,7 +105,7 @@ def main(argv: Optional[List[str]] = None, consumer: Optional[Consumer] = None) 
             print("bootstrap: %s" % cfg.bootstrap_servers)
             try:
                 missing = missing_topics(consumer)
-            except Exception as exc:   # noqa: BLE001 - KafkaException; confluent_kafka is imported lazily
+            except Exception as exc:
                 print("UNREACHABLE: %s (is the kafka service up?)" % exc)
                 return 1
             if missing:
