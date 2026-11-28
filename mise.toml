@@ -99,6 +99,10 @@ run = "uv run pytest -v"
 description = "Everything CI and the pre-commit hook run: lint, the agent typecheck, then tests"
 run = ["mise run lint", "mise run typecheck:agent", "mise run test:agent", "uv run -q pytest -q -rs"]
 
+[tasks."check:ratchet"]
+description = "Fail when tests or assertions drop below a base ref: mise run check:ratchet -- --base origin/main (not part of check)"
+run = "uv run -q python scripts/check_test_ratchet.py"
+
 [tasks."smoke:replay"]
 description = "Replay the committed sample through the running stack"
 depends = ["broker:check", "kafka:replay"]
