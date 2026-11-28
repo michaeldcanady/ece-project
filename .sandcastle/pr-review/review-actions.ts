@@ -119,17 +119,20 @@ export const botRepliedLast = (comments: readonly { readonly author: string; rea
   return last !== undefined && isBot(last.author) && last.body.includes(REVIEW_MARKER);
 };
 
+/** The text the workflow wrote after the marker; the model-written summary above it is never trusted. */
+const afterMarker = (body: string): string => body.slice(body.lastIndexOf(REVIEW_MARKER));
+
 /** The head shas named in reviews the bot itself posted (`sha=<sha>` beside REVIEW_MARKER). */
 export const reviewedShasOf = (reviews: readonly { readonly author: string; readonly body: string }[]): string[] =>
   reviews.flatMap((r) => {
-    const sha = isBot(r.author) && r.body.includes(REVIEW_MARKER) ? /^sha=([0-9a-f]+)$/m.exec(r.body)?.[1] : undefined;
+    const sha = isBot(r.author) && r.body.includes(REVIEW_MARKER) ? /^sha=([0-9a-f]+)$/m.exec(afterMarker(r.body))?.[1] : undefined;
     return sha === undefined ? [] : [sha];
   });
 
 /** The diff digests named in reviews the bot itself posted (`diff=<digest>` beside REVIEW_MARKER). */
 export const reviewedDiffsOf = (reviews: readonly { readonly author: string; readonly body: string }[]): string[] =>
   reviews.flatMap((r) => {
-    const digest = isBot(r.author) && r.body.includes(REVIEW_MARKER) ? /^diff=([0-9a-f]+)$/m.exec(r.body)?.[1] : undefined;
+    const digest = isBot(r.author) && r.body.includes(REVIEW_MARKER) ? /^diff=([0-9a-f]+)$/m.exec(afterMarker(r.body))?.[1] : undefined;
     return digest === undefined ? [] : [digest];
   });
 
