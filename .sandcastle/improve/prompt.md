@@ -44,7 +44,11 @@ Each candidate's `body` is the spec, in this format:
 
 {{SPEC_FORMAT}}
 
-Finish with the `<output>` tag only when the specs are complete.
+# OUTPUT
+
+{{OUTPUT_SHAPE}}
+
+Output it only when the specs are complete.
 
 # WRITING STYLE
 

@@ -24,7 +24,7 @@ Do not push, open or edit PRs, or touch issue labels.
 Write a short markdown summary to `{{NOTES_FILE}}`: what you fixed, and what you noticed but left for the human
 reviewer, under the two headings **Standards** and **Spec**. It becomes part of the PR description.
 
-Output `<promise>COMPLETE</promise>` when done.
+Output `<promise>COMPLETE</promise>` when done. Your final message is not read, so output only that.
 
 # WRITING STYLE
 

@@ -4,7 +4,7 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { claudeAgent, fail, required, writeJson, writingStyle } from "../shared/common";
 import { alreadyFiledList } from "../shared/candidate-issue";
-import { runWithExtraction } from "../shared/run-with-extraction";
+import { runStructured } from "../shared/run-structured";
 import { existingSchema, planSchema } from "./plan";
 
 /**
@@ -21,9 +21,9 @@ try {
   );
   const alreadyFiled = alreadyFiledList(existing);
 
-  const plan = await runWithExtraction({
+  const plan = await runStructured({
     name: "improve-scan",
-    agent: claudeAgent(),
+    agent: claudeAgent("improve"),
     sandbox: noSandbox(),
     logging: { type: "stdout" },
     maxIterations: 1,
@@ -32,11 +32,11 @@ try {
     promptArgs: {
       ALREADY_FILED: alreadyFiled,
       WRITING_STYLE: writingStyle(),
+      OUTPUT_SHAPE: fs.readFileSync(here("output-shape.md"), "utf8"),
       STRENGTH_RUBRIC: fs.readFileSync(path.join(import.meta.dirname, "../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(path.join(import.meta.dirname, "../shared/spec-format.md"), "utf8"),
     },
     output: sandcastle.Output.object({ tag: "output", schema: planSchema }),
-    extractionPrompt: fs.readFileSync(here("extraction.md"), "utf8"),
     maxRetries: 1,
   });
 

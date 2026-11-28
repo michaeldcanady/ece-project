@@ -1,4 +1,4 @@
-Output your final answer now as a single `<output>` tag containing only JSON of this shape, and nothing else:
+When your work is done, output your final answer as a single `<output>` tag containing only JSON of this shape, and nothing else:
 
 ```
 {"summary": "string", "door": "one-way" | "two-way", "comments": [{"path": "string", "line": 1, "body": "string"}], "resolved": [{"threadId": "string", "reply": "string"}]}

@@ -20,8 +20,11 @@ concurrency:
   cancel-in-progress: false
 
 # Open `agent:candidate` issues at which the scan pauses, so unread specs do not pile up.
+# A scheduled scan also skips when main has had no commit for this many hours: the scan reads recent history for hot
+# spots, so an unchanged main would only rediscover candidates the dedupe already holds. Manual runs always scan.
 env:
   MAX_OPEN_CANDIDATES: "10"
+  QUIET_HOURS: "25"
 
 jobs:
   list:
@@ -29,6 +32,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       issues: read
+      contents: read
     outputs:
       proceed: ${{ steps.list.outputs.proceed }}
     steps:
@@ -47,9 +51,18 @@ jobs:
           if [ "$open" -ge "$MAX_OPEN_CANDIDATES" ]; then
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "Paused: $open open agent:candidate issues. Review or close some." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            since=$(date -u -d "$QUIET_HOURS hours ago" +%Y-%m-%dT%H:%M:%SZ)
+            recent=$(gh api "repos/$GH_REPO/commits?sha=main&since=$since&per_page=1" --jq 'length')
+            if [ "$recent" = "0" ]; then
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              echo "Skipped: no commit on main in the last $QUIET_HOURS hours, so a scan would find nothing new." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: existing

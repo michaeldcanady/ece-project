@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { fail, required, writeJson } from "../shared/common";
 import { gh, readReviews } from "./github-reads";
-import { ownedOpenThreads, reviewedShasOf } from "./review-actions";
+import { ownedOpenThreads, reviewedDiffsOf, reviewedShasOf } from "./review-actions";
 import { reviewContextSchema, type ReviewContext } from "./review-context";
 
 /**
@@ -88,7 +88,9 @@ try {
     })),
     pullRequest.author?.login ?? "",
   );
-  const reviewedShas = reviewedShasOf(readReviews(repo, pr));
+  const reviews = readReviews(repo, pr);
+  const reviewedShas = reviewedShasOf(reviews);
+  const reviewedDiffs = reviewedDiffsOf(reviews);
 
   const context: ReviewContext = reviewContextSchema.parse({
     pr,
@@ -97,6 +99,7 @@ try {
     files: files.map((f) => ({ path: f.filename, patch: f.patch ?? "" })),
     openThreads,
     reviewedShas,
+    reviewedDiffs,
   });
   writeJson("context.json", context);
   console.log(`Context written: ${files.length} files, ${openThreads.length} open threads.`);

@@ -3,11 +3,39 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as sandcastle from "@ai-hero/sandcastle";
 
-/** The model the spec, improve and implement passes use; change it here only. */
-export const MODEL = "claude-sonnet-5-5";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
-/** The model the review passes use (implement's review pass and pr-review). Set to "claude-opus-5-5" to review with Opus. */
-export const REVIEW_MODEL = MODEL;
+export interface Role {
+  readonly model: string;
+  readonly effort: Effort;
+}
+
+const SONNET = "claude-sonnet-5-5";
+const OPUS = "claude-opus-5-5";
+
+/**
+ * Model and reasoning effort for every agent session; change them here only. Effort is the cheaper lever: lower it
+ * before switching model, and raise it before switching up. Rationale: the implement gate
+ * (`mise run check`) catches most errors, so implement does not need high effort; the first review of a PR is the
+ * human's last automated check, so it gets the strongest model.
+ */
+export const ROLES = {
+  improve: { model: SONNET, effort: "high" },
+  spec: { model: SONNET, effort: "high" },
+  implement: { model: SONNET, effort: "medium" },
+  implementReview: { model: SONNET, effort: "low" },
+  prReviewFirst: { model: OPUS, effort: "high" },
+  prReviewFollowup: { model: SONNET, effort: "medium" },
+} as const satisfies Record<string, Role>;
+
+export type RoleName = keyof typeof ROLES;
+
+/**
+ * Whether implement runs its own review pass before the PR opens. pr-review reads the same diff against the same
+ * standards, so leaving this off saves one agent session and one `mise run check` per issue. Off by default: one
+ * observed pass fixed a hypothetical edge case and left the rest for the human.
+ */
+export const IMPLEMENT_REVIEW_PASS = false;
 
 export const outputDir = (): string => process.env.OUTPUT_DIR ?? "/tmp";
 
@@ -57,14 +85,13 @@ export const exec = (
 };
 
 /** The agent gets the OAuth token and nothing else: no GitHub credentials. */
-const agentFor = (model: string) =>
+const agentFor = ({ model, effort }: Role) =>
   sandcastle.claudeCode(model, {
+    effort,
     env: { CLAUDE_CODE_OAUTH_TOKEN: required("CLAUDE_CODE_OAUTH_TOKEN") },
   });
 
-export const claudeAgent = () => agentFor(MODEL);
-
-export const claudeReviewAgent = () => agentFor(REVIEW_MODEL);
+export const claudeAgent = (role: RoleName) => agentFor(ROLES[role]);
 
 /** The shared writing style, injected into every agent prompt as `{{WRITING_STYLE}}`. */
 export const writingStyle = (): string =>

@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { claudeAgent, fail, required, writeJson, writingStyle } from "../shared/common";
-import { runWithExtraction } from "../shared/run-with-extraction";
+import { runStructured } from "../shared/run-structured";
 import { specSchema } from "./spec-plan";
 
 /**
@@ -21,9 +21,9 @@ try {
   };
   const note = [issue.body, ...issue.comments.map((c, i) => `Comment ${i + 1}:\n${c.body}`)].join("\n\n");
 
-  const spec = await runWithExtraction({
+  const spec = await runStructured({
     name: "spec",
-    agent: claudeAgent(),
+    agent: claudeAgent("spec"),
     sandbox: noSandbox(),
     logging: { type: "stdout" },
     maxIterations: 1,
@@ -33,11 +33,11 @@ try {
       ISSUE_TITLE: issue.title,
       ISSUE_NOTE: note,
       WRITING_STYLE: writingStyle(),
+      OUTPUT_SHAPE: fs.readFileSync(here("output-shape.md"), "utf8"),
       STRENGTH_RUBRIC: fs.readFileSync(here("../shared/strength-rubric.md"), "utf8"),
       SPEC_FORMAT: fs.readFileSync(here("../shared/spec-format.md"), "utf8"),
     },
     output: sandcastle.Output.object({ tag: "output", schema: specSchema }),
-    extractionPrompt: fs.readFileSync(here("extraction.md"), "utf8"),
     maxRetries: 1,
   });
 

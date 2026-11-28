@@ -11,7 +11,8 @@ Read the change with `git diff {{BASE_SHA}}...{{HEAD_SHA}}`. The working tree is
 
 # METHOD
 
-1. Read `CLAUDE.md`, `GLOSSARY.md`, `CODING_STANDARDS.md` and `.claude/rules/*`.
+1. Judge against the standards under STANDARDS below. They are already in your context: do not re-read them.
+   `CLAUDE.md` is loaded too.
 2. Review the diff on three axes: does it follow those standards, is it correct (bugs, missing tests, broken
    behaviour), and is it a one-way or two-way door. Read the surrounding code before judging a hunk.
 3. Comment only on lines of the new version that the diff shows, and only on what matters. Do not praise, and do
@@ -37,6 +38,14 @@ Read the change with `git diff {{BASE_SHA}}...{{HEAD_SHA}}`. The working tree is
 # OPEN THREADS FROM EARLIER REVIEWS
 
 {{OPEN_THREADS}}
+
+# STANDARDS
+
+{{STANDARDS}}
+
+# OUTPUT
+
+{{OUTPUT_SHAPE}}
 
 # WRITING STYLE
 
