@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { doorLabels } from "./door";
 import { BOT_LOGIN, MAX_COMMENTS, REVIEW_MARKER, type PriorThread, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
@@ -54,7 +55,22 @@ export const commentableLines = (patch: string): ReadonlySet<number> => {
   return lines;
 };
 
-export const alreadyReviewed = (context: ReviewContext): boolean => context.reviewedShas.includes(context.headSha);
+/**
+ * A digest of what the PR changes, so a push that leaves the diff as it was (a merge of main, a rebase, an amended
+ * message) is recognised without a model run. Null when a file has no patch (binary or too large): its content is
+ * unknown, so the digest cannot vouch for it.
+ */
+export const diffDigest = (files: ReviewContext["files"]): string | null => {
+  if (files.some((f) => f.patch === "")) return null;
+  const canonical = [...files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => [f.path, f.patch]);
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex").slice(0, 16);
+};
+
+export const alreadyReviewed = (context: ReviewContext): boolean => {
+  if (context.reviewedShas.includes(context.headSha)) return true;
+  const digest = diffDigest(context.files);
+  return digest !== null && context.reviewedDiffs.includes(digest);
+};
 
 const isBot = (login: string): boolean => login.replace(/\[bot\]$/, "") === BOT_LOGIN;
 
@@ -110,6 +126,13 @@ export const reviewedShasOf = (reviews: readonly { readonly author: string; read
     return sha === undefined ? [] : [sha];
   });
 
+/** The diff digests named in reviews the bot itself posted (`diff=<digest>` beside REVIEW_MARKER). */
+export const reviewedDiffsOf = (reviews: readonly { readonly author: string; readonly body: string }[]): string[] =>
+  reviews.flatMap((r) => {
+    const digest = isBot(r.author) && r.body.includes(REVIEW_MARKER) ? /^diff=([0-9a-f]+)$/m.exec(r.body)?.[1] : undefined;
+    return digest === undefined ? [] : [digest];
+  });
+
 const marked = (text: string): string => `${text}\n\n${REVIEW_MARKER}`;
 
 export const planActions = (review: Review, context: ReviewContext): ReviewActions => {
@@ -138,6 +161,7 @@ export const planActions = (review: Review, context: ReviewContext): ReviewActio
 
   const parts = [review.summary];
   if (unanchored.length > 0) parts.push(unanchored.join("\n"));
-  parts.push(`${REVIEW_MARKER}\nsha=${context.headSha}`);
+  const digest = diffDigest(context.files);
+  parts.push(`${REVIEW_MARKER}\nsha=${context.headSha}${digest === null ? "" : `\ndiff=${digest}`}`);
   return { commitId: context.headSha, body: parts.join("\n\n"), inline, resolutions, door: doorLabels(review.door) };
 };

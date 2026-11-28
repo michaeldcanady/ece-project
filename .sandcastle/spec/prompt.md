@@ -34,7 +34,11 @@ Also rate the spec honestly. A human asked for it, so `speculative` is allowed: 
 
 {{STRENGTH_RUBRIC}}
 
-Finish with the `<output>` tag only when the spec is complete.
+# OUTPUT
+
+{{OUTPUT_SHAPE}}
+
+Output it only when the spec is complete.
 
 # WRITING STYLE
 

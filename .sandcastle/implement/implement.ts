@@ -4,9 +4,9 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import {
   claudeAgent,
-  claudeReviewAgent,
   exec,
   fail,
+  IMPLEMENT_REVIEW_PASS,
   outputDir,
   required,
   writeText,
@@ -60,8 +60,11 @@ try {
     ...issue.comments.map((c, i) => `## Comment ${i + 1}\n${c.body}`),
   ].join("\n\n");
 
+  const implementNotesFile = path.join(outputDir(), "implement_notes.md");
+  const reviewNotesFile = path.join(outputDir(), "review_notes.md");
+
   const common = {
-    agent: claudeAgent(),
+    agent: claudeAgent("implement"),
     sandbox: noSandbox(),
     logging: { type: "stdout" } as const,
     idleTimeoutSeconds: 600,
@@ -73,7 +76,13 @@ try {
     // One attempt. A failed run gets one recovery run (see implement.yml), not more iterations here.
     maxIterations: ITERATIONS_PER_PASS,
     promptFile: here("prompt.md"),
-    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, WRITING_STYLE: writingStyle() },
+    promptArgs: {
+      ISSUE_NUMBER,
+      BRANCH,
+      ISSUE_CONTEXT: issueContext,
+      NOTES_FILE: implementNotesFile,
+      WRITING_STYLE: writingStyle(),
+    },
   });
 
   if (commitsAhead() === 0) fail("The implement agent made no commits.");
@@ -83,35 +92,44 @@ try {
   const first = check();
   if (!first.ok) fail(`mise run check failed after implementation:\n\n${tail(first.output)}`);
 
-  const notesFile = path.join(outputDir(), "review_notes.md");
-  await sandcastle.run({
-    ...common,
-    agent: claudeReviewAgent(),
-    name: `review-#${ISSUE_NUMBER}`,
-    maxIterations: ITERATIONS_PER_PASS,
-    promptFile: here("review-prompt.md"),
-    promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: notesFile, WRITING_STYLE: writingStyle() },
-  });
+  if (IMPLEMENT_REVIEW_PASS) {
+    await sandcastle.run({
+      ...common,
+      agent: claudeAgent("implementReview"),
+      name: `review-#${ISSUE_NUMBER}`,
+      maxIterations: ITERATIONS_PER_PASS,
+      promptFile: here("review-prompt.md"),
+      promptArgs: { ISSUE_NUMBER, BRANCH, ISSUE_CONTEXT: issueContext, NOTES_FILE: reviewNotesFile, WRITING_STYLE: writingStyle() },
+    });
 
-  guardProtected("The review pass");
+    guardProtected("The review pass");
 
-  const second = check();
-  if (!second.ok) fail(`mise run check failed after review:\n\n${tail(second.output)}`);
+    const second = check();
+    if (!second.ok) fail(`mise run check failed after review:\n\n${tail(second.output)}`);
+  }
 
-  const notes = fs.existsSync(notesFile) ? fs.readFileSync(notesFile, "utf8") : "(the review pass wrote no notes)";
+  const readNotes = (file: string, none: string): string => {
+    const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : "";
+    return text === "" ? none : text;
+  };
   writeText(
     "pr_body.md",
     [
       `Closes #${ISSUE_NUMBER}`,
       "",
-      "Implemented by the nightly agent from the issue's spec, then reviewed by a second agent pass.",
+      IMPLEMENT_REVIEW_PASS
+        ? "Implemented by the nightly agent from the issue's spec, then reviewed by a second agent pass."
+        : "Implemented by the nightly agent from the issue's spec.",
       "",
       "## Verification",
-      "- `mise run check` (lint, strong-types check, tests) passed after implementation and again after review.",
+      IMPLEMENT_REVIEW_PASS
+        ? "- `mise run check` (lint, strong-types check, tests) passed after implementation and again after review."
+        : "- `mise run check` (lint, strong-types check, tests) passed after implementation.",
       "- The DAG tests need the sibling Airflow container, which does not exist on the runner, so they were **skipped**. Run them in the dev container before merging.",
       "",
-      "## Review pass",
-      notes,
+      "## Implementation notes",
+      readNotes(implementNotesFile, "(none: the agent made no choices beyond the issue and changed no unlisted files)"),
+      ...(IMPLEMENT_REVIEW_PASS ? ["", "## Review pass", readNotes(reviewNotesFile, "(the review pass wrote no notes)")] : []),
     ].join("\n"),
   );
 } catch (error) {

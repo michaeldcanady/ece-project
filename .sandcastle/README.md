@@ -61,6 +61,16 @@ Labels move `agent:candidate` (a spec run adds it, with a `strength:*`) > (`agen
 - `pr-review.yml` and `.sandcastle/pr-review/` are covered by `PROTECTED`, so a human must change them.
 - A PAT, not `GITHUB_TOKEN`, so that `check.yml` runs on the PR without an approval click.
 
+## Models and effort
+
+`ROLES` in `shared/common.ts` sets the model and reasoning effort for each agent session; change them there only. Improve,
+spec and pr-review each run one session that ends with the `<output>` tag, whose JSON shape comes from the
+workflow's `output-shape.md`; sandcastle resumes the session to fix a missing or invalid tag. `IMPLEMENT_REVIEW_PASS`
+(off by default) turns the review pass inside `implement.ts` on. Implement writes the choices the spec left open to
+`implement_notes.md`, which the PR body carries. `pr-review` uses the strongest role for a PR's first review and a cheaper one
+after that, and skips a push whose diff digest (`diff=` in the review body) matches one already reviewed. The nightly
+scan skips when `main` has had no commit for `QUIET_HOURS`.
+
 ## Setup
 
 `mise run agent:setup` in a real terminal: secrets, labels, backlog issues, first dry run.

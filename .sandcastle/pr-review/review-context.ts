@@ -35,6 +35,8 @@ export const reviewContextSchema = z.object({
   openThreads: z.array(priorThreadSchema),
   /** Head shas already named in a marked review body. */
   reviewedShas: z.array(z.string()),
+  /** Diff digests (see diffDigest) named in a marked review body. */
+  reviewedDiffs: z.array(z.string()),
 });
 
 export type ReviewContext = z.infer<typeof reviewContextSchema>;

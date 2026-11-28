@@ -28,7 +28,14 @@ present. Then read the code and tests the issue names.
 Do not push, open or edit PRs, touch issue labels, or modify `.github/`, `.sandcastle/`, `CLAUDE.md`, or
 `CODING_STANDARDS.md`.
 
-When the acceptance criteria are met and `mise run check` is green, output `<promise>COMPLETE</promise>`.
+# NOTES
+
+Write a short markdown file to `{{NOTES_FILE}}` for the human reviewer: each choice the issue did not specify, and
+each change outside the files the issue lists, with the reason. Write nothing if there are none. It becomes part of
+the PR description.
+
+When the acceptance criteria are met and `mise run check` is green, output `<promise>COMPLETE</promise>`. Your final
+message is not read, so output only that.
 
 # WRITING STYLE
 

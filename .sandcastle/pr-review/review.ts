@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
-import { claudeReviewAgent, exec, fail, required, writeJson, writingStyle } from "../shared/common";
-import { runWithExtraction } from "../shared/run-with-extraction";
+import { claudeAgent, exec, fail, required, writeJson, writingStyle } from "../shared/common";
+import { runStructured } from "../shared/run-structured";
 import { alreadyReviewed } from "./review-actions";
 import { reviewContextSchema, type ReviewContext } from "./review-context";
 import { reviewSchema } from "./review-plan";
@@ -16,6 +16,17 @@ import { reviewSchema } from "./review-plan";
 const here = (file: string) => path.join(import.meta.dirname, file);
 
 const head = (): string => exec("git", ["rev-parse", "HEAD"]).output.trim();
+
+/** The repo's standards, inlined so the reviewer cannot skip reading them. `CLAUDE.md` is loaded by Claude Code itself. */
+const standards = (): string => {
+  const rules = fs.existsSync(".claude/rules")
+    ? fs.readdirSync(".claude/rules").filter((f) => f.endsWith(".md")).sort().map((f) => `.claude/rules/${f}`)
+    : [];
+  return ["GLOSSARY.md", "CODING_STANDARDS.md", ...rules]
+    .filter((f) => fs.existsSync(f))
+    .map((f) => `## ${f}\n\n${fs.readFileSync(f, "utf8").trim()}`)
+    .join("\n\n");
+};
 
 const renderThreads = (context: ReviewContext): string =>
   context.openThreads.length === 0
@@ -34,10 +45,12 @@ try {
   if (alreadyReviewed(context)) {
     console.log(`Head ${context.headSha} was already reviewed; nothing to do.`);
   } else {
+    // The first review of a PR is the strongest; later pushes are checked against threads the first one opened.
+    const role = context.reviewedShas.length === 0 ? "prReviewFirst" : "prReviewFollowup";
     const before = head();
-    const review = await runWithExtraction({
+    const review = await runStructured({
       name: `pr-review-${context.pr}`,
-      agent: claudeReviewAgent(),
+      agent: claudeAgent(role),
       sandbox: noSandbox(),
       logging: { type: "stdout" },
       maxIterations: 1,
@@ -48,9 +61,10 @@ try {
         HEAD_SHA: context.headSha,
         OPEN_THREADS: renderThreads(context),
         WRITING_STYLE: writingStyle(),
+        STANDARDS: standards(),
+        OUTPUT_SHAPE: fs.readFileSync(here("output-shape.md"), "utf8"),
       },
       output: sandcastle.Output.object({ tag: "output", schema: reviewSchema }),
-      extractionPrompt: fs.readFileSync(here("extraction.md"), "utf8"),
       maxRetries: 1,
     });
 

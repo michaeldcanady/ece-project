@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alreadyReviewed, botRepliedLast, commentableLines, ownedOpenThreads, planActions, reviewedShasOf, type RawThread } from "./review-actions";
+import {
+  alreadyReviewed,
+  botRepliedLast,
+  commentableLines,
+  diffDigest,
+  ownedOpenThreads,
+  planActions,
+  reviewedDiffsOf,
+  reviewedShasOf,
+  type RawThread,
+} from "./review-actions";
 import { REVIEW_MARKER, type ReviewContext } from "./review-context";
 import type { Review } from "./review-plan";
 
@@ -25,6 +35,7 @@ const context = (over: Partial<ReviewContext> = {}): ReviewContext => ({
   files: [{ path: "a.ts", patch: PATCH }],
   openThreads: [{ threadId: "T1", firstCommentId: 11, path: "a.ts", line: 4, comments: [] }],
   reviewedShas: [],
+  reviewedDiffs: [],
   ...over,
 });
 
@@ -136,4 +147,37 @@ test("the door becomes a label to add and the opposite one to remove, and never 
   assert.deepEqual(one.door, { add: "door:one-way", remove: "door:two-way" });
   assert.doesNotMatch(one.body, /door/i);
   assert.deepEqual(planActions(review(), context()).door, { add: "door:two-way", remove: "door:one-way" });
+});
+
+test("a push that leaves the diff unchanged is already reviewed, even under a new head sha", () => {
+  const digest = diffDigest(context().files);
+  assert.notEqual(digest, null);
+  assert.equal(alreadyReviewed(context({ headSha: "merge-of-main", reviewedDiffs: [String(digest)] })), true);
+  assert.equal(alreadyReviewed(context({ headSha: "merge-of-main", reviewedDiffs: ["0000"] })), false);
+});
+
+test("a changed patch changes the digest, and file order does not", () => {
+  const a = { path: "a.ts", patch: PATCH };
+  const b = { path: "b.ts", patch: PATCH };
+  assert.equal(diffDigest([a, b]), diffDigest([b, a]));
+  assert.notEqual(diffDigest([a]), diffDigest([{ ...a, patch: `${PATCH}\n+extra` }]));
+});
+
+test("a file with no patch gives no digest, so it is never skipped by diff", () => {
+  assert.equal(diffDigest([{ path: "img.png", patch: "" }]), null);
+  assert.equal(alreadyReviewed(context({ files: [{ path: "img.png", patch: "" }], reviewedDiffs: ["abc"] })), false);
+});
+
+test("the body carries the diff digest and reviewedDiffsOf reads it only from marked bot reviews", () => {
+  const body = planActions(review(), context()).body;
+  const digest = diffDigest(context().files);
+  assert.ok(body.includes(`diff=${digest}`));
+  assert.deepEqual(
+    reviewedDiffsOf([
+      { author: "github-actions[bot]", body },
+      { author: "mallory", body: `${REVIEW_MARKER}\ndiff=dead` },
+      { author: "github-actions[bot]", body: "diff=beef" },
+    ]),
+    [String(digest)],
+  );
 });
