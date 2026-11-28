@@ -14,7 +14,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
-from typing import List, Mapping, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from citibike_contract import JsonObject
 
@@ -35,10 +35,10 @@ from .schemas import (
     to_table,
 )
 from .snapshot import STATUS_ROW_COLS, StatusRow, compute_snapshot
-from .station_information import StationInformation
+from .station_information_table import StationInformationTable
 from .stats import Stats
 from .storage import Storage
-from .storage_ops import get_json, put_json, put_parquet, read_parquet
+from .storage_ops import get_json, put_json, put_parquet
 from .timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -113,13 +113,6 @@ def plan_batch(run_id: str, reader: KafkaBatchReader, storage: Storage, cfg: Pip
 # process
 # ---------------------------------------------------------------------------------------------
 
-def _load_dim(storage: Storage) -> Optional[Mapping[str, StationInformation]]:
-    if not storage.exists(lake.DIM_STATION_CURRENT):
-        return None
-    t = read_parquet(storage, lake.DIM_STATION_CURRENT)
-    return {s.station_id: s for s in StationInformation.from_table(t)}
-
-
 def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: PipelineConfig,
                   now: Optional[datetime] = None) -> Stats:
     batch_id = plan.batch_id
@@ -131,8 +124,8 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
     context = EnrichmentContext.read(storage, decoded, batch_id, cfg)
     weather_rows = [CuratedWeatherRow.from_delivered(d, batch_id, processed_at) for d in decoded.weather]
 
-    status_rows, counts = enrich_status(decoded.status, context.prior, _load_dim(storage), context.weather,
-                                        batch_id, processed_at, cfg)
+    status_rows, counts = enrich_status(decoded.status, context.prior, StationInformationTable().current(storage),
+                                        context.weather, batch_id, processed_at, cfg)
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
     for et, rows in decoded.raw_rows_by_event_type().items():

@@ -15,6 +15,7 @@ from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
 from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.quality import daily_quality
 from citibike_pipeline.station_info import build_dim_station
+from citibike_pipeline.station_information_table import StationInformationTable
 from citibike_pipeline.storage_ops import read_parquet
 from citibike_pipeline.verdict import Verdict
 from citibike_producer.synthetic import generate
@@ -292,12 +293,13 @@ def test_station_info_builds_dimension_and_refuses_empty(tmp_path, capture):
     cfg, storage, consumer, reader = make_env(tmp_path, capture)
     out = build_dim_station(reader, storage, cfg)
     assert out.stations == 40
-    dim = read_parquet(storage, lake.DIM_STATION_CURRENT).to_pylist()
-    assert len(dim) == 40 and {"lat", "lon", "capacity"} <= set(dim[0])
+    dim = StationInformationTable().current(storage)
+    assert dim is not None and len(dim) == 40 and all(s.capacity is not None for s in dim.values())
     consumer.log[("citibike.station_info", 0)] = []
     with pytest.raises(RuntimeError):
         build_dim_station(reader, storage, cfg)
-    assert len(read_parquet(storage, lake.DIM_STATION_CURRENT).to_pylist()) == 40   # not overwritten
+    after = StationInformationTable().current(storage)
+    assert after is not None and len(after) == 40   # not overwritten
 
 
 HOUR = START                       # 12:00, an hour several batches write into
