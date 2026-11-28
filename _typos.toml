@@ -1,0 +1,5 @@
+[files]
+extend-exclude = ["uv.lock", "data/", "logs/", ".sandcastle/package-lock.json", ".sandcastle/node_modules/"]
+
+[default.extend-words]
+Caf = "Caf"  # "Café" as UTF-8 bytes in tests/test_envelope.py

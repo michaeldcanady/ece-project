@@ -8,6 +8,7 @@ python = "3.9"
 uv = "latest"
 node = "22"          # only for the agent workflows in .sandcastle/
 actionlint = "latest"
+typos = "latest"
 
 # mise is the interface to the project: every command a person runs is a task here (`mise tasks` lists them).
 # uv is only the package manager the tasks call. The pipeline itself runs as Airflow DAGs; these tasks set up
@@ -88,8 +89,8 @@ description = "Unit tests for the agent workflows in .sandcastle/ (run after typ
 run = "npm run --prefix .sandcastle test"
 
 [tasks.lint]
-description = "Lint: ruff, the strong-types, mypy, layer, agent-label and prompt-argument checks, then actionlint on the workflows"
-run = ["uv run -q ruff check .", "uv run -q python scripts/check_strong_types.py", "uv run -q python scripts/check_mypy.py", "uv run -q python scripts/check_layers.py", "uv run -q python scripts/check_agent_labels.py", "uv run -q python scripts/check_prompt_args.py", "actionlint"]
+description = "Lint: ruff, the strong-types, mypy, layer, agent-label and prompt-argument checks, actionlint on the workflows, then a typos spell check"
+run = ["uv run -q ruff check .", "uv run -q python scripts/check_strong_types.py", "uv run -q python scripts/check_mypy.py", "uv run -q python scripts/check_layers.py", "uv run -q python scripts/check_agent_labels.py", "uv run -q python scripts/check_prompt_args.py", "actionlint", "typos"]
 
 [tasks.test]
 description = "Run the tests (no network or broker needed)"
