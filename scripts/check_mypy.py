@@ -33,8 +33,6 @@ BASELINE: Mapping[str, int] = {
     "citibike_pipeline/lake_table.py": 1,
     "citibike_pipeline/station_status.py": 8,
     "citibike_pipeline/weather_observation.py": 1,
-    "citibike_producer/gbfs_station_job.py": 10,
-    "citibike_producer/weather_job.py": 11,
     "scripts/check_strong_types.py": 0,
 }
 
