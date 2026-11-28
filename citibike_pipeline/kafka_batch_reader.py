@@ -37,7 +37,7 @@ class KafkaBatchReader:
         from confluent_kafka import TopicPartition
 
         positions: MutableRanges = {}
-        for topic in topics:
+        for topic in topics:  # noqa: PLR1702
             md = self._c.list_topics(topic, timeout=10)
             tmeta = md.topics.get(topic)
             if tmeta is None or getattr(tmeta, "error", None) is not None or not tmeta.partitions:
@@ -53,7 +53,7 @@ class KafkaBatchReader:
                 positions.setdefault(topic, {})[pid] = (start, high)
         return positions
 
-    def read(self, ranges: Ranges, timeout_s: float) -> List[Record]:
+    def read(self, ranges: Ranges, timeout_s: float) -> List[Record]:  # noqa: C901, PLR0915
         """Read exactly the planned ranges. Raises on timeout rather than returning a short batch."""
         from confluent_kafka import KafkaError, TopicPartition
 

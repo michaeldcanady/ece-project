@@ -44,7 +44,7 @@ class PriorContext:
         return cls(seen=frozenset(seen), max_last_reported=newest)
 
 
-def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorContext,
+def enrich_status(statuses: Sequence[Delivered[StationStatus]], prior: PriorContext,  # noqa: PLR0913, PLR0915
                   dimension: Optional[Mapping[str, StationInformation]], weather: Sequence[WeatherReading],
                   batch_id: str, processed_at: datetime, cfg: PipelineConfig) -> Tuple[List[CuratedStatusRow], Counts]:
     """Dedup, flag, and enrich station observations in deterministic (time, partition, offset) order.

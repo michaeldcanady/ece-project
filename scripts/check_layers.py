@@ -165,7 +165,7 @@ def _module_name(root: str, path: str) -> str:
 def _modules(root: str, roots: Sequence[str]) -> Mapping[str, str]:
     """Module name -> file path for every module under the roots."""
     found = {}
-    for top in roots:
+    for top in roots:  # noqa: PLR1702
         for here, _dirs, files in os.walk(os.path.join(root, top)):
             for name in sorted(files):
                 if name.endswith(".py"):

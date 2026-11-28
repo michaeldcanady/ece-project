@@ -39,7 +39,7 @@ def ensure_topics(bootstrap_servers: str, replication: int = 1, retention_days: 
         try:
             fut.result()
             result[name] = "created"
-        except Exception as exc:   # noqa: BLE001 - KafkaException carries the error code in its text
+        except Exception as exc:
             if "TOPIC_ALREADY_EXISTS" in str(exc):
                 result[name] = "exists"
             else:

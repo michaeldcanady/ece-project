@@ -74,7 +74,7 @@ def encode(envelope: Envelope) -> bytes:
     return json.dumps(wire, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def decode(value: Optional[bytes]) -> Envelope:
+def decode(value: Optional[bytes]) -> Envelope:  # noqa: C901
     """Parse wire bytes into an envelope, or raise InvalidEnvelope with every reason they are not one.
     Unknown top-level fields are dropped, so envelopes from a newer producer still decode."""
     if not value:

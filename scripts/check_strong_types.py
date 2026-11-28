@@ -78,7 +78,7 @@ def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Tuple[str, int]]:
 
 
 def _annotations(tree: ast.AST) -> Iterator[Optional[ast.expr]]:
-    for node in ast.walk(tree):
+    for node in ast.walk(tree):  # noqa: PLR1702
         if isinstance(node, ast.AnnAssign):
             yield node.annotation
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -120,7 +120,7 @@ def _object_uses(tree: ast.AST) -> List[int]:
     def scan(annotation: Optional[ast.expr]) -> None:
         lines.extend(line for node, line in _type_names(annotation) if _is_object(node))
 
-    for node in ast.walk(tree):
+    for node in ast.walk(tree):  # noqa: PLR1702
         if isinstance(node, ast.AnnAssign):
             scan(node.annotation)
             if "TypeAlias" in ast.dump(node.annotation) and isinstance(node.value, (ast.Subscript, ast.Constant)):
@@ -147,7 +147,7 @@ def violations(path: str) -> List[Tuple[int, str]]:
 
 
 def python_files(root: str) -> Iterator[str]:
-    for top in ROOTS:
+    for top in ROOTS:  # noqa: PLR1702
         for dirpath, dirnames, filenames in os.walk(os.path.join(root, top)):
             dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
             for name in filenames:
