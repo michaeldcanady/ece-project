@@ -105,7 +105,7 @@ def check(packages: Sequence[Package], allowed: FrozenSet[str]) -> List[Finding]
     """One finding per package whose license is missing or not allowed, sorted by package name."""
     findings: List[Finding] = []
     for package in sorted(packages, key=lambda p: (p.name.casefold(), p.version)):
-        if package.name.casefold() == PROJECT:
+        if re.sub(r"[-_.]+", "-", package.name).casefold() == PROJECT:
             continue
         expression = _license_expression(package)
         label = "%s %s" % (package.name, package.version)
