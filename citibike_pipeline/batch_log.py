@@ -5,14 +5,15 @@ Every key derives from the batch id, so a retry of the same batch overwrites its
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
-from typing import List, Mapping
+from typing import List
 
 import pyarrow as pa
 
 from .batch_log_entry import BatchLogEntry
-from .counts import Counts
+from .batch_log_row import BatchLogRow
+from .counts import Counts as Counts
 from .hour_partitions import part_key, partition_path
-from .latencies import Latencies
+from .latencies import Latencies as Latencies
 from .schemas import BATCH_LOG as BATCH_LOG_SCHEMA
 from .schemas import to_table
 from .storage import Storage
@@ -56,24 +57,8 @@ class BatchLog:
 
 
 def _table(entries: List[BatchLogEntry]) -> pa.Table:
-    return to_table([_flat(e) for e in entries], BATCH_LOG_SCHEMA)
-
-
-def _flat(e: BatchLogEntry) -> Mapping[str, object]:
-    """The entry as one row of the Batch log's flat columns."""
-    return {"batch_id": e.batch_id, "run_id": e.run_id, "as_of": e.as_of, "planned_at": e.planned_at,
-            "published_at": e.published_at, "finished_at": e.finished_at, **e.counts.to_json(),
-            "latency_p50_s": e.latencies.p50_s, "latency_p95_s": e.latencies.p95_s,
-            "latency_max_s": e.latencies.max_s, "status": e.status}
+    return to_table([BatchLogRow.from_entry(e) for e in entries], BATCH_LOG_SCHEMA)
 
 
 def _entries(storage: Storage, key: str) -> List[BatchLogEntry]:
-    return [_entry(row) for row in read_parquet(storage, key).to_pylist()]
-
-
-def _entry(row: Mapping[str, object]) -> BatchLogEntry:
-    return BatchLogEntry(
-        batch_id=row["batch_id"], run_id=row["run_id"], as_of=row["as_of"], planned_at=row["planned_at"],
-        published_at=row["published_at"], finished_at=row["finished_at"], counts=Counts.from_json(row),
-        latencies=Latencies(p50_s=row["latency_p50_s"], p95_s=row["latency_p95_s"], max_s=row["latency_max_s"]),
-        status=row["status"])
+    return [BatchLogRow(**row).to_entry() for row in read_parquet(storage, key).to_pylist()]

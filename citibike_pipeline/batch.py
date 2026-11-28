@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
@@ -29,7 +29,7 @@ from .jsonfields import as_int, as_object
 from .kafka_batch_reader import KafkaBatchReader
 from .plan import Plan
 from .ranges import cap_ranges, fits_within, ranges_to_json, total_messages
-from .rows import CuratedWeatherRow, as_mappings
+from .rows import CuratedWeatherRow
 from .schemas import (
     DLQ,
     to_table,
@@ -129,12 +129,12 @@ def process_batch(plan: Plan, reader: KafkaBatchReader, storage: Storage, cfg: P
 
     # ---- writes: deterministic keys, overwrite-safe ------------------------------------------
     for et, rows in decoded.raw_rows_by_event_type().items():
-        lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, [asdict(r) for r in rows])
-    status_hours = lake.CURATED_STATUS.write(storage, batch_id, as_mappings(status_rows))
-    lake.CURATED_WEATHER.write(storage, batch_id, as_mappings(weather_rows))
+        lake.RAW_BY_EVENT_TYPE[et].write(storage, batch_id, rows)
+    status_hours = lake.CURATED_STATUS.write(storage, batch_id, status_rows)
+    lake.CURATED_WEATHER.write(storage, batch_id, weather_rows)
     if decoded.dead_letters:
         put_parquet(storage, part_key(lake.DLQ, as_of, "%s.parquet" % batch_id),
-                    to_table([asdict(r) for r in decoded.dead_letters], DLQ))
+                    to_table(decoded.dead_letters, DLQ))
 
     stats = Stats(batch_id=batch_id, as_of=as_of, status_hours=tuple(status_hours),
                   counts=replace(counts, records_read=len(records), raw_rows=len(decoded.raw_rows),

@@ -15,6 +15,7 @@ from citibike_contract import (
     OUTCOME_PARSE,
     OUTCOME_SKIPPED,
     Envelope,
+    JsonObject,
     MissingKafkaKey,
     Outcome,
     PollLog,
@@ -76,7 +77,7 @@ def poll(source: PollSource, state: JobState, cfg: Config, sink: KafkaSink) -> P
     return _finish_delivered(run, read, _publish(run, keyed, skipped))
 
 
-def _envelope(run: PollRun, read: FeedRead, payload: Mapping[str, object]) -> Envelope:
+def _envelope(run: PollRun, read: FeedRead, payload: JsonObject) -> Envelope:
     return Envelope(event_type=run.source.event_type, poll_id=run.poll_id, source=run.source.source,
                     source_url=run.res.url, gbfs_version=read.gbfs_version,
                     feed_last_updated=read.feed_last_updated,

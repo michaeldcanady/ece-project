@@ -5,7 +5,7 @@ import argparse
 import sys
 from dataclasses import dataclass, fields
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from . import serving
 from .batch_log import BatchLog
@@ -39,9 +39,9 @@ class StatusReport:
     health: Optional[LakeHealth]
     problem: Optional[str] = None
 
-    def lines(self) -> List[Tuple[str, object]]:
+    def lines(self) -> List[Tuple[str, str]]:
         """The (name, value) lines `citibike-status` prints: ok, the health figures, then the problem if any."""
-        out: List[Tuple[str, object]] = [("ok", self.ok)]
+        out: List[Tuple[str, str]] = [("ok", str(self.ok))]
         if self.health is not None:
             out += [(f.name, _printable(getattr(self.health, f.name))) for f in fields(self.health)]
         if self.problem is not None:
@@ -49,8 +49,8 @@ class StatusReport:
         return out
 
 
-def _printable(value: object) -> object:
-    return value.isoformat() if isinstance(value, datetime) else value
+def _printable(value: Union[datetime, int, float, None]) -> str:
+    return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
 def summarize(storage: Storage, max_age_min: float) -> StatusReport:

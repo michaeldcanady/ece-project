@@ -1,8 +1,10 @@
 """The gold window rules: a row the pipeline's own metrics produce is consistent; each broken rule is named."""
-from dataclasses import asdict, replace
+from dataclasses import replace
+from datetime import datetime, timezone
 
 from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.obs import Obs
+from citibike_pipeline.station_window import StationWindow
 from citibike_pipeline.window_metrics import WindowMetrics
 from tests.e2e_live.gold_checks import window_row_problems
 
@@ -14,9 +16,7 @@ def row(bikes_first, bikes_last, docks_first, docks_last, minutes=14):
     obs = [Obs(AS_OF - minutes * 60, bikes_first, docks_first), Obs(AS_OF, bikes_last, docks_last)]
     m = WindowMetrics.over(obs, AS_OF, CFG)
     assert m is not None
-    r = asdict(m)
-    del r["window_start"]
-    return r
+    return StationWindow.from_metrics("st-1", datetime.fromtimestamp(AS_OF, timezone.utc), "b0", m)
 
 
 def test_rows_from_the_pipelines_own_metrics_are_consistent():
@@ -30,10 +30,10 @@ def test_too_little_coverage_has_no_rate_and_is_consistent():
 
 def test_each_broken_rule_is_named():
     good = row(10, 4, 5, 11)
-    assert window_row_problems({**good, "net_change": 0}, CFG) == ["net_change is not bikes_last - bikes_first"]
-    assert "rate_per_min is not net change over coverage" in window_row_problems({**good, "rate_per_min": 9.0}, CFG)
+    assert window_row_problems(replace(good, net_change=0), CFG) == ["net_change is not bikes_last - bikes_first"]
+    assert "rate_per_min is not net change over coverage" in window_row_problems(replace(good, rate_per_min=9.0), CFG)
     assert "minutes_to_empty does not follow from bikes_last and the rate" in window_row_problems(
-        {**good, "minutes_to_empty": 1.0}, CFG)
-    flagged = {**good, "at_risk_empty": False}
+        replace(good, minutes_to_empty=1.0), CFG)
+    flagged = replace(good, at_risk_empty=False)
     assert window_row_problems(flagged, CFG) == ["at-risk flags do not follow the horizon and noise-floor rule"]
     assert window_row_problems(row(10, 4, 5, 11), replace(CFG, risk_horizon_minutes=1.0)) != []

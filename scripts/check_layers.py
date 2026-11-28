@@ -31,6 +31,7 @@ TOP_CHAIN = "dags"
 LAYER_MAP = {
     "citibike_contract": "contract:contract",
     "citibike_contract.envelope": "contract:contract",
+    "citibike_contract.json_value": "contract:contract",
     "citibike_contract.poll_log": "contract:contract",
     "citibike_contract.invalid_envelope": "contract:contract",
     "citibike_contract.missing_kafka_key": "contract:contract",
@@ -52,6 +53,7 @@ LAYER_MAP = {
     # pipeline: infrastructure (Kafka, storage, the lake)
     "citibike_pipeline.batch_log": "pipeline:infrastructure",
     "citibike_pipeline.batch_log_entry": "pipeline:infrastructure",
+    "citibike_pipeline.batch_log_row": "pipeline:infrastructure",
     "citibike_pipeline.counts": "pipeline:infrastructure",
     "citibike_pipeline.plan": "pipeline:infrastructure",
     "citibike_pipeline.stats": "pipeline:infrastructure",
@@ -62,6 +64,7 @@ LAYER_MAP = {
     "citibike_pipeline.lake": "pipeline:infrastructure",
     "citibike_pipeline.raw_row": "pipeline:infrastructure",
     "citibike_pipeline.schemas": "pipeline:infrastructure",
+    "citibike_pipeline.table_row": "pipeline:infrastructure",
     "citibike_pipeline.serving": "pipeline:infrastructure",
     "citibike_pipeline.storage": "pipeline:infrastructure",
     "citibike_pipeline.s3_paginator": "pipeline:infrastructure",
@@ -134,6 +137,7 @@ LAYER_MAP = {
     "citibike_producer.weather_feed": "producer:jobs",
     # DAGs
     "dags._common": "dags:orchestration and entry",
+    "dags.dag_default_args": "dags:orchestration and entry",
     "dags.citibike_compaction": "dags:orchestration and entry",
     "dags.citibike_daily_quality": "dags:orchestration and entry",
     "dags.citibike_ingest_status": "dags:orchestration and entry",

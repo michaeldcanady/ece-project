@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from confluent_kafka import KafkaError, Message
 
 
 class DeliveryBatch:
@@ -15,7 +18,7 @@ class DeliveryBatch:
         self.failed = 0
         self.last_error: Optional[str] = None
 
-    def callback(self, err: object, msg: object) -> None:
+    def callback(self, err: Optional[KafkaError], msg: Optional[Message]) -> None:
         with self._lock:
             if err is not None:
                 self.failed += 1

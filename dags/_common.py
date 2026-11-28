@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Mapping, Optional
 
 import pendulum
+from dag_default_args import DagDefaultArgs
 
 if TYPE_CHECKING:
     from citibike_producer.task_instance_like import TaskInstanceLike
@@ -17,7 +18,7 @@ DAG_KWARGS = {
 }
 
 
-def default_args(retries: int, retry_delay: timedelta, execution_timeout: timedelta) -> Mapping[str, object]:
+def default_args(retries: int, retry_delay: timedelta, execution_timeout: timedelta) -> DagDefaultArgs:
     return {"owner": "airflow", "retries": retries, "retry_delay": retry_delay,
             "execution_timeout": execution_timeout}
 

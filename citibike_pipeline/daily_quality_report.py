@@ -5,6 +5,8 @@ from typing import Mapping, Optional
 
 from pydantic import BaseModel
 
+from citibike_contract.json_value import JsonObject
+
 from .batch_section import BatchSection
 from .daily_quality_report_thresholds import DailyQualityReportThresholds
 from .dlq_section import DLQSection
@@ -22,16 +24,17 @@ class DailyQualityReport(BaseModel):
     dlq: DLQSection
     verdict: Optional[Verdict] = None
 
-    def to_json(self) -> Mapping[str, object]:
+    def to_json(self) -> JsonObject:
         """The report.json object: a day with no batches reports just `{"batches": 0}`, as ever."""
-        out = self.model_dump(mode="json", by_alias=True)
+        unmeasured = {job: section.unmeasured_fields() for job, section in self.polls.items()}
+        out = self.model_dump(mode="json", by_alias=True, exclude={"polls": unmeasured})
         return {**out, "batches": {"batches": 0}} if self.batches is None else out
 
     def to_markdown(self) -> str:
         s, ss, b = self.station_observations, self.polls.get("station_status"), self.batches
 
-        def polled(field: str) -> object:
-            return getattr(ss, field, None)
+        def polled(field: str) -> str:
+            return str(getattr(ss, field, None))
 
         lines = [
             "# Data quality report, %s (UTC)" % self.day_utc, "",

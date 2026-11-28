@@ -21,32 +21,7 @@ ROOTS = ("citibike_contract", "citibike_pipeline", "citibike_producer", "dags", 
 WEAK = frozenset({"Any", "Dict", "dict"})
 
 # path -> `object` uses allowed (the count when the rule was added). Only ever lower these.
-OBJECT_BASELINE: Mapping[str, int] = {
-    "citibike_contract/__init__.py": 1,
-    "citibike_contract/envelope.py": 1,
-    "citibike_contract/poll_log.py": 1,
-    "citibike_pipeline/batch_log.py": 2,
-    "citibike_pipeline/counts.py": 1,
-    "citibike_pipeline/daily_quality_report.py": 2,
-    "citibike_pipeline/dim_station_build.py": 1,
-    "citibike_pipeline/lake_table.py": 2,
-    "citibike_pipeline/poll_section.py": 1,
-    "citibike_pipeline/rows.py": 1,
-    "citibike_pipeline/s3_client.py": 3,
-    "citibike_pipeline/schemas.py": 1,
-    "citibike_pipeline/serving.py": 1,
-    "citibike_pipeline/status.py": 3,
-    "citibike_pipeline/storage_ops.py": 1,
-    "citibike_producer/feed_read.py": 1,
-    "citibike_producer/jsonvalues.py": 1,
-    "citibike_producer/poll.py": 1,
-    "citibike_producer/producer_like.py": 3,
-    "citibike_producer/station_feed.py": 1,
-    "citibike_producer/synthetic.py": 5,
-    "citibike_producer/task_instance_like.py": 1,
-    "dags/_common.py": 1,
-    "tests/e2e_live/gold_checks.py": 3,
-}
+OBJECT_BASELINE: Mapping[str, int] = {}
 
 
 def _subscript_of(node: ast.AST, name: str) -> bool:
