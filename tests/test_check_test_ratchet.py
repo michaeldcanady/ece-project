@@ -85,3 +85,8 @@ def test_the_real_tests_directory_has_tests():
     found = check_test_ratchet.count_tree(files)
     assert found.tests > 0
     assert found.assertions > 0
+
+
+def test_unknown_base_ref_exits_2_with_git_message_not_a_traceback(capsys):
+    assert check_test_ratchet.main(["--base", "no-such-ref-for-ratchet"]) == 2
+    assert "cannot read tests/ at no-such-ref-for-ratchet" in capsys.readouterr().err

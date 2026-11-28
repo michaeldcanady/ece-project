@@ -4,7 +4,8 @@ Counting is static through `ast`: no test is imported or run. A test is a functi
 `tests/test_*.py` file, at module level or in a class. An assertion is an `assert` statement or a
 `with pytest.raises(...)` block. A parametrized test counts once, however many cases it has; this is a known limit.
 
-Without `--base` the check is skipped. A pull request that drops tests on purpose needs a reviewer's sign-off in CI.
+Without `--base` the check is skipped. A pull request that drops tests on purpose needs a
+reviewer's sign-off. The check runs by hand for now: it is not part of `mise run check` and no workflow calls it.
 
 Usage: python scripts/check_test_ratchet.py --base <git ref>   (run by `mise run check:ratchet`)
 """
@@ -87,7 +88,11 @@ def main(argv: Sequence[str]) -> int:
     if not args.base:
         print("no base ref, skipped")
         return 0
-    base = count_tree(_read_base(args.base))
+    try:
+        base = count_tree(_read_base(args.base))
+    except subprocess.CalledProcessError as e:
+        print(f"test ratchet: cannot read {TESTS_DIR}/ at {args.base}: {e.stderr.strip()}", file=sys.stderr)
+        return 2
     head = count_tree(_read_head(Path(__file__).resolve().parent.parent))
     findings = compare(base, head)
     for finding in findings:
