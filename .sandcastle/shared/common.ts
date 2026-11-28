@@ -15,7 +15,7 @@ const OPUS = "claude-opus-5-5";
 
 /**
  * Model and reasoning effort for every agent session; change them here only. Effort is the cheaper lever: lower it
- * before switching model, and raise it before switching up. Evidence for each choice: the implement gate
+ * before switching model, and raise it before switching up. Rationale: the implement gate
  * (`mise run check`) catches most errors, so implement does not need high effort; the first review of a PR is the
  * human's last automated check, so it gets the strongest model.
  */
@@ -92,7 +92,6 @@ const agentFor = ({ model, effort }: Role) =>
   });
 
 export const claudeAgent = (role: RoleName) => agentFor(ROLES[role]);
-
 
 /** The shared writing style, injected into every agent prompt as `{{WRITING_STYLE}}`. */
 export const writingStyle = (): string =>

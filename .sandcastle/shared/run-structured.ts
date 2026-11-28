@@ -4,7 +4,7 @@ import type { OutputObjectDefinition, RunOptions, RunResult } from "@ai-hero/san
 export interface RunStructuredOptions<T> extends Omit<RunOptions, "output" | "completionSignal"> {
   readonly output: OutputObjectDefinition<T>;
   /** Extra attempts after the first if the output tag is missing or fails validation. */
-  readonly maxRetries?: number;
+  readonly maxRetries: number;
 }
 
 /**
@@ -13,6 +13,6 @@ export interface RunStructuredOptions<T> extends Omit<RunOptions, "output" | "co
  * costs one session instead of a produce session plus an extraction session that re-emits the whole answer.
  */
 export const runStructured = async <T>(options: RunStructuredOptions<T>): Promise<RunResult & { output: T }> => {
-  const { output, maxRetries = 2, ...runOptions } = options;
+  const { output, maxRetries, ...runOptions } = options;
   return run({ ...runOptions, completionSignal: `</${output.tag}>`, output: { ...output, maxRetries } });
 };
