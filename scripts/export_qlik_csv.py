@@ -16,7 +16,7 @@ from __future__ import annotations
 import glob
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -31,7 +31,7 @@ HOURLY_COLUMNS = ["station_id", "window_start", "bikes_last", "docks_last", "net
                   "at_risk_empty", "at_risk_full"]
 
 
-def _read_all(files: List[str], columns: List[str] = None) -> pa.Table:
+def _read_all(files: List[str], columns: Optional[List[str]] = None) -> pa.Table:
     if not files:
         raise SystemExit("no parquet files found: is the lake path right and the pipeline running?")
     return pa.concat_tables([pq.read_table(f, columns=columns) for f in sorted(files)], promote_options="default")
@@ -61,8 +61,11 @@ def station_hourly(lake: str) -> pa.Table:
     grouped = t.group_by(["station_id", "hour_start"]).aggregate(
         [("bikes_last", "mean"), ("docks_last", "mean"), ("net_change", "sum"),
          ("risk_empty_i", "max"), ("risk_full_i", "max")])
-    return grouped.rename_columns(["station_id", "hour_start", "avg_bikes", "avg_docks", "net_change_sum",
-                                   "was_at_risk_empty", "was_at_risk_full"])
+    # aggregate() returns the aggregate columns first and the group keys last: select by name, then rename
+    selected = grouped.select(["station_id", "hour_start", "bikes_last_mean", "docks_last_mean", "net_change_sum",
+                               "risk_empty_i_max", "risk_full_i_max"])
+    return selected.rename_columns(["station_id", "hour_start", "avg_bikes", "avg_docks", "net_change_sum",
+                                    "was_at_risk_empty", "was_at_risk_full"])
 
 
 def main(argv: List[str]) -> None:
