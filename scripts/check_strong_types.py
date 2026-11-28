@@ -15,7 +15,7 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import Iterator, List, Mapping, Optional, Tuple, Union
+from typing import Iterator, List, Mapping, MutableMapping, Optional, Tuple, Union
 
 ROOTS = ("citibike_contract", "citibike_pipeline", "citibike_producer", "dags", "scripts", "tests")
 WEAK = frozenset({"Any", "Dict", "dict"})
@@ -85,12 +85,13 @@ def _object_uses(tree: ast.AST) -> List[int]:
     def scan(annotation: Optional[ast.expr]) -> None:
         if annotation is None:
             return
+        line = annotation.lineno          # a quoted annotation parses with lines relative to its string
         if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
             try:
                 annotation = ast.parse(annotation.value, mode="eval").body
             except SyntaxError:
                 return
-        lines.extend(getattr(annotation, "lineno", 0) for n in ast.walk(annotation) if _is_object(n))
+        lines.extend(line for n in ast.walk(annotation) if _is_object(n))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
@@ -149,7 +150,7 @@ def object_failures(counts: Mapping[str, int], baseline: Mapping[str, int]) -> L
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     failed = False
-    counts = {}
+    counts: MutableMapping[str, int] = {}
     for path in sorted(python_files(root)):
         uses = object_uses(os.path.join(root, path))
         if uses:
