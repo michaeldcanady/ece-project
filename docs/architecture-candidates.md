@@ -20,7 +20,7 @@ a typed `PollResult` and `ProducerState` with `to_json`/`from_json`. Two adapter
 
 ## 2. Station dimension: one module for build, key and load (worth exploring)
 
-**Files:** `citibike_pipeline/station_info.py` (`build_dim_station`), `batch.py` (`_load_dim`), `station_information_table.py`
+**Files:** `citibike_pipeline/station_info.py` (`build_dim_station`), `station_information_table.py`
 (`StationInformationTable`), `schemas.py` (`DIM_STATION`).
 
 **Problem:** the dimension has no glossary term and its knowledge is split: `station_info` hand-writes the
