@@ -88,6 +88,7 @@ LAYER_MAP = {
     "citibike_pipeline.station_info": "pipeline:orchestration and entry",
     "citibike_pipeline.dim_station_build": "pipeline:infrastructure",
     "citibike_pipeline.dim_station_row": "pipeline:infrastructure",
+    "citibike_pipeline.station_information_table": "pipeline:infrastructure",
     "citibike_pipeline.status": "pipeline:orchestration and entry",
     "citibike_pipeline.rejected": "pipeline:core",
     "citibike_pipeline.jsonnumbers": "pipeline:core",

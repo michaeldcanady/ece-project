@@ -8,16 +8,14 @@ from typing import Optional
 
 from citibike_contract import InvalidEnvelope, decode
 
-from . import lake
 from .config import TOPIC_INFO, PipelineConfig
 from .dim_station_build import DimStationBuild
 from .dim_station_row import DimStationRow
 from .kafka_batch_reader import KafkaBatchReader
 from .ranges import ranges_to_json, total_messages
-from .schemas import DIM_STATION, to_table
 from .station_information import StationInformation
+from .station_information_table import StationInformationTable
 from .storage import Storage
-from .storage_ops import put_parquet
 from .timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -46,10 +44,7 @@ def build_dim_station(reader: KafkaBatchReader, storage: Storage, cfg: PipelineC
         # never replace a good dimension with an empty one
         raise RuntimeError("no valid station_information records (read %d, rejected %d)" % (len(records), rejected))
 
-    table = to_table([r for _, r in sorted(latest.items())], DIM_STATION)
-    snap_key = "curated/dim_station/snapshot_dt=%s/hr=%02d/dim_station.parquet" % (now.strftime("%Y-%m-%d"), now.hour)
-    put_parquet(storage, snap_key, table)
-    put_parquet(storage, lake.DIM_STATION_CURRENT, table)
+    StationInformationTable().replace(storage, list(latest.values()), now)
     log.info("dim_station: %d stations from %d records (%d rejected)", len(latest), len(records), rejected)
     return DimStationBuild(stations=len(latest), records_read=len(records), rejected=rejected,
                            messages_planned=total_messages(ranges), ranges=json.dumps(ranges_to_json(ranges)))

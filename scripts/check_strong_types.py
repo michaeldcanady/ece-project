@@ -24,12 +24,24 @@ WEAK = frozenset({"Any", "Dict", "dict"})
 OBJECT_BASELINE: Mapping[str, int] = {}
 
 
-def _is_literal(node: ast.AST) -> bool:
+def _subscript_of(node: ast.AST, name: str) -> bool:
     if not isinstance(node, ast.Subscript):
         return False
     base = node.value
-    return (isinstance(base, ast.Name) and base.id == "Literal") or (
-        isinstance(base, ast.Attribute) and base.attr == "Literal")
+    return (isinstance(base, ast.Name) and base.id == name) or (isinstance(base, ast.Attribute) and base.attr == name)
+
+
+def _is_literal(node: ast.AST) -> bool:
+    return _subscript_of(node, "Literal")
+
+
+def _children(node: ast.expr) -> List[ast.expr]:
+    """The parts of an annotation that are types. `Annotated[T, meta...]` has one: T, the rest is metadata."""
+    if _subscript_of(node, "Annotated") and isinstance(node, ast.Subscript):
+        inner = node.slice
+        first = inner.elts[0] if isinstance(inner, ast.Tuple) and inner.elts else inner
+        return [first, node.value]
+    return [c for c in ast.iter_child_nodes(node) if isinstance(c, ast.expr)]
 
 
 TypeName = Union[ast.Name, ast.Attribute]
@@ -55,7 +67,7 @@ def _type_names(annotation: Optional[ast.expr], line: Optional[int] = None) -> I
                 continue
             yield from _type_names(inner, at)
             continue
-        pending.extend(c for c in ast.iter_child_nodes(n) if isinstance(c, ast.expr))
+        pending.extend(_children(n))
 
 
 def _weak_names(annotation: Optional[ast.expr]) -> Iterator[Tuple[str, int]]:
@@ -81,9 +93,24 @@ def _is_object(node: Optional[ast.AST]) -> bool:
     return isinstance(node, ast.Name) and node.id == "object"
 
 
-def _is_alias_target(node: ast.Assign) -> bool:
-    """`Name = Mapping[str, object]`: a CapWords name, the convention for a type alias."""
-    return len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()
+GENERICS = frozenset({
+    "dict", "list", "tuple", "set", "frozenset", "type",
+    "Mapping", "MutableMapping", "Sequence", "MutableSequence", "List", "Tuple", "Set", "FrozenSet", "Iterable",
+    "Iterator", "Collection", "Callable", "Optional", "Union", "Type", "Awaitable", "Generator", "AsyncIterator",
+    "Annotated", "ClassVar", "Final", "Required", "NotRequired",
+})
+
+
+def _is_alias(node: ast.Assign) -> bool:
+    """`Name = Mapping[str, object]`: a CapWords name assigned a subscript of a generic, not a data lookup such as
+    `Kind = payload["object"]`. A generic is one of GENERICS, so `Kind = Config["object"]` is a lookup too."""
+    if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id[:1].isupper()):
+        return False
+    if not isinstance(node.value, ast.Subscript):
+        return False
+    base = node.value.value
+    name = base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else ""
+    return name in GENERICS
 
 
 def _object_uses(tree: ast.AST) -> List[int]:
@@ -96,9 +123,9 @@ def _object_uses(tree: ast.AST) -> List[int]:
     for node in ast.walk(tree):
         if isinstance(node, ast.AnnAssign):
             scan(node.annotation)
-            if isinstance(node.value, ast.Subscript) and "TypeAlias" in ast.dump(node.annotation):
-                scan(node.value)                                # `X: TypeAlias = Mapping[str, object]`
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript) and _is_alias_target(node):
+            if "TypeAlias" in ast.dump(node.annotation) and isinstance(node.value, (ast.Subscript, ast.Constant)):
+                scan(node.value)                  # `X: TypeAlias = Mapping[str, object]`, or the same in quotes
+        elif isinstance(node, ast.Assign) and _is_alias(node):
             scan(node.value)                                    # `X = Mapping[str, object]`
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scan(node.returns)

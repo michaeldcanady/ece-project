@@ -9,8 +9,8 @@ import pyarrow.compute as pc
 
 from citibike_pipeline.batch_log import BatchLog
 from citibike_pipeline.ranges import Ranges
+from citibike_pipeline.station_information_table import StationInformationTable
 from citibike_pipeline.storage import Storage
-from citibike_pipeline.storage_ops import read_parquet
 
 from .check_result import CheckResult
 from .lake_scan import read_all
@@ -103,13 +103,15 @@ def value_sanity(storage: Storage, future_skew_s: int) -> List[CheckResult]:
 
 
 def station_dimension(storage: Storage) -> List[CheckResult]:
-    dim = read_parquet(storage, "curated/dim_station/current.parquet")
+    current = StationInformationTable().current(storage)
+    if current is None:
+        return [CheckResult("5a the station dimension is not empty", False, "the station dimension table is missing")]
     t = read_all(storage, "curated/station_status", ["is_unknown_station", "station_name"])
     unknown = pc.sum(t["is_unknown_station"].cast("int64")).as_py() or 0
     known_unnamed = pc.sum(pc.and_(pc.invert(t["is_unknown_station"]), pc.is_null(t["station_name"]))
                            .cast("int64")).as_py() or 0
     return [
-        CheckResult("5a the station dimension is not empty", dim.num_rows > 0, "%d stations" % dim.num_rows),
+        CheckResult("5a the station dimension is not empty", len(current) > 0, "%d stations" % len(current)),
         CheckResult("5b every known station got its dimension attributes",
                     known_unnamed == 0,
                     "%d unnamed known rows; %d of %d rows flagged unknown station"

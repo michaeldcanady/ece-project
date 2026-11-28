@@ -71,3 +71,20 @@ def _weak(source: str) -> List[str]:
 def test_nested_quoted_weak_names_are_flagged() -> None:
     assert _weak("def f(x: List['dict']) -> None: ...") == ["dict"]
     assert _weak("x: Optional['Any'] = None") == ["Any"]
+
+
+def test_annotated_metadata_is_not_a_type() -> None:
+    assert _uses("def f(x: Annotated[int, 'object']) -> None: ...") == []
+    assert _uses("def f(x: Annotated[Sequence[object], 'meta']) -> None: ...") == [1]
+
+
+def test_capwords_data_lookup_is_not_a_type_alias() -> None:
+    assert _uses("Kind = payload['object']") == []
+    assert _uses("Row = rows['object']") == []
+    assert _uses("Row = Mapping[str, object]") == [1]
+    assert _uses("Row = dict[str, object]") == [1]
+    assert _uses("Kind = Config['object']") == []
+
+
+def test_quoted_type_alias_is_scanned() -> None:
+    assert _uses("X: TypeAlias = 'Mapping[str, object]'") == [1]

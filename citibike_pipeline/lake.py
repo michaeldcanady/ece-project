@@ -21,7 +21,6 @@ from .timeutil import utcnow
 
 log = logging.getLogger(__name__)
 
-DIM_STATION_CURRENT = "curated/dim_station/current.parquet"
 DLQ = "dlq"
 GOLD_WINDOW = "gold/station_window_15m"
 GOLD_AVAILABILITY = "gold/system_availability_5m"
