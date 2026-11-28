@@ -4,9 +4,9 @@
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Mapping, Optional, Sequence
+from typing import Optional
 
 from .delivered import Delivered
 from .weather_observation import WeatherObservation
@@ -82,8 +82,3 @@ class CuratedWeatherRow:
                    weather_code=w.weather_code, cloud_cover=w.cloud_cover, wind_speed_kmh=w.wind_speed_kmh,
                    poll_id=env.poll_id, kafka_topic=rec.topic, kafka_partition=rec.partition,
                    kafka_offset=rec.offset, batch_id=batch_id, processed_at=processed_at)
-
-
-def as_mappings(rows: Sequence[CuratedStatusRow | CuratedWeatherRow]) -> List[Mapping[str, object]]:
-    """The rows as the column-name mappings `lake.write` takes."""
-    return [asdict(r) for r in rows]

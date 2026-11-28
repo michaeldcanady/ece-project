@@ -4,6 +4,10 @@ from dataclasses import dataclass, fields
 from datetime import timedelta
 from typing import Mapping
 
+from citibike_contract.json_value import JsonObject
+
+from .jsonfields import as_int
+
 SERVING_BATCH_LOG = "gold/serving/batch_log_recent.parquet"
 BATCH_LOG = "ops/batch_log"
 RECENT = timedelta(hours=24)
@@ -28,6 +32,6 @@ class Counts:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
     @classmethod
-    def from_json(cls, obj: Mapping[str, object]) -> Counts:
+    def from_json(cls, obj: JsonObject) -> Counts:
         """Rebuild from flat keys; a missing key raises KeyError."""
-        return cls(**{f.name: int(obj[f.name]) for f in fields(cls)})
+        return cls(**{f.name: as_int(obj[f.name]) for f in fields(cls)})

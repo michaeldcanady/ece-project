@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from citibike_contract import JsonObject
+from citibike_contract import JsonObject, JsonValue
 
 from .jsonvalues import mapping_or_empty, optional_int, optional_str
 
@@ -14,7 +14,7 @@ class StationFeed:
     last_updated: Optional[int]
     ttl: Optional[int]
     version: Optional[str]
-    stations: Sequence[object]      # one item per station; an item that is not an object is not sent
+    stations: Sequence[JsonValue]      # one item per station; an item that is not an object is not sent
 
     @staticmethod
     def parse(body: JsonObject) -> Optional[StationFeed]:

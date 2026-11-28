@@ -41,8 +41,9 @@ class WeatherObservation:
             errors.append("bad_temperature")
         if errors:
             return Rejected(tuple(errors))
+        location_id = payload.get("location_id")
         return cls(
-            location_id=payload.get("location_id"),
+            location_id=location_id if isinstance(location_id, str) else None,
             obs_time=from_epoch(current["time"]), temperature_c=temperature,
             relative_humidity=current.get("relative_humidity_2m"), precipitation_mm=current.get("precipitation"),
             rain_mm=current.get("rain"), snowfall_cm=current.get("snowfall"),

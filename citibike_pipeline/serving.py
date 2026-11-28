@@ -5,11 +5,8 @@ time never moves backwards.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import datetime
-from typing import List, Optional
-
-import pyarrow as pa
+from typing import Optional
 
 from . import lake
 from .hour_partitions import part_key
@@ -38,17 +35,13 @@ def serving_as_of(storage: Storage, batch_as_of: datetime) -> datetime:
     return prev.as_of if prev is not None and prev.as_of > batch_as_of else batch_as_of
 
 
-def _table(rows: List[object], schema: pa.Schema) -> pa.Table:
-    return to_table([asdict(r) for r in rows], schema)
-
-
 def publish(storage: Storage, snap: Snapshot) -> None:
     """Write the snapshot's history, then the serving files, last of all."""
     put_parquet(storage, part_key(lake.GOLD_WINDOW, snap.as_of, "%s.parquet" % snap.batch_id),
-                _table(snap.windows, WINDOW_15M))
+                to_table(snap.windows, WINDOW_15M))
     bucket = snap.availability.bucket_start
     put_parquet(storage, part_key(lake.GOLD_AVAILABILITY, snap.as_of, "%s.parquet" % bucket.strftime("%H%M")),
-                _table([snap.availability], SYSTEM_AVAILABILITY))
-    put_parquet(storage, AT_RISK, _table(snap.at_risk, CURRENT_STATE))
-    put_parquet(storage, SUMMARY, _table([snap.availability], SYSTEM_AVAILABILITY))
-    put_parquet(storage, CURRENT, _table(snap.states, CURRENT_STATE))
+                to_table([snap.availability], SYSTEM_AVAILABILITY))
+    put_parquet(storage, AT_RISK, to_table(snap.at_risk, CURRENT_STATE))
+    put_parquet(storage, SUMMARY, to_table([snap.availability], SYSTEM_AVAILABILITY))
+    put_parquet(storage, CURRENT, to_table(snap.states, CURRENT_STATE))

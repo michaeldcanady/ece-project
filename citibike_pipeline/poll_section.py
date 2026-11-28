@@ -5,9 +5,9 @@ import json
 import logging
 from collections import Counter
 from datetime import datetime
-from typing import List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import List, Mapping, MutableMapping, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
+from pydantic import BaseModel
 
 from citibike_contract import InvalidPollLog, PollLog
 
@@ -35,12 +35,9 @@ class PollSection(BaseModel):
     gap_seconds_total: Optional[Union[int, float]] = None     # 0 (not 0.0) with no gaps, as on the wire
     largest_gaps: Optional[List[PollGap]] = None
 
-    @model_serializer(mode="wrap")
-    def _without_unmeasured_gaps(self, handler: SerializerFunctionWrapHandler) -> Mapping[str, object]:
-        data = handler(self)
-        if self.expected_polls is not None:
-            return data
-        return {k: v for k, v in data.items() if k not in _GAP_FIELDS}
+    def unmeasured_fields(self) -> Set[str]:
+        """The gap fields to leave out of the JSON: all of them unless completeness was measured."""
+        return set() if self.expected_polls is not None else set(_GAP_FIELDS)
 
     @staticmethod
     def read_day(storage: Storage, cfg: PipelineConfig, start: datetime, end: datetime) -> Mapping[str, PollSection]:

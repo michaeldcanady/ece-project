@@ -8,6 +8,7 @@ from typing import Tuple
 from citibike_contract import JsonObject
 
 from .batch_log import Counts
+from .jsonfields import as_array
 from .timeutil import iso, parse_iso
 
 log = logging.getLogger(__name__)
@@ -29,4 +30,4 @@ class Stats:
     @classmethod
     def from_json(cls, obj: JsonObject) -> Stats:
         return cls(batch_id=str(obj["batch_id"]), as_of=parse_iso(str(obj["as_of"])), counts=Counts.from_json(obj),
-                   status_hours=tuple(parse_iso(str(h)) for h in obj["status_hours"]))
+                   status_hours=tuple(parse_iso(str(h)) for h in as_array(obj["status_hours"])))

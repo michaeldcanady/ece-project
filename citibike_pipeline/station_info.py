@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
 
@@ -47,7 +46,7 @@ def build_dim_station(reader: KafkaBatchReader, storage: Storage, cfg: PipelineC
         # never replace a good dimension with an empty one
         raise RuntimeError("no valid station_information records (read %d, rejected %d)" % (len(records), rejected))
 
-    table = to_table([asdict(r) for _, r in sorted(latest.items())], DIM_STATION)
+    table = to_table([r for _, r in sorted(latest.items())], DIM_STATION)
     snap_key = "curated/dim_station/snapshot_dt=%s/hr=%02d/dim_station.parquet" % (now.strftime("%Y-%m-%d"), now.hour)
     put_parquet(storage, snap_key, table)
     put_parquet(storage, lake.DIM_STATION_CURRENT, table)

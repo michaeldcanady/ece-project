@@ -57,7 +57,7 @@ def _required_id(envelope: Envelope, field: str) -> str:
 
 def encode(envelope: Envelope) -> bytes:
     """Compact JSON in the wire's field order; the replay fields only for a replayed envelope."""
-    wire: Mapping[str, object] = {
+    wire: JsonObject = {
         "schema_version": SCHEMA_VERSION,
         "event_type": envelope.event_type,
         "poll_id": envelope.poll_id,

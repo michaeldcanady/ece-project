@@ -14,6 +14,7 @@ from citibike_pipeline.config import PipelineConfig
 from citibike_pipeline.kafka_batch_reader import KafkaBatchReader
 from citibike_pipeline.local_storage import LocalStorage
 from citibike_pipeline.quality import daily_quality
+from citibike_pipeline.raw_row import RawRow
 from citibike_pipeline.station_info import build_dim_station
 from citibike_pipeline.storage_ops import read_parquet
 from citibike_pipeline.verdict import Verdict
@@ -385,8 +386,11 @@ def test_read_window_excludes_a_batch_also_inside_compacted_files(tmp_path, capt
 
 def test_read_window_never_excludes_rows_without_a_batch_id(tmp_path):
     storage = LocalStorage(str(tmp_path))
-    rows = [{"kafka_topic": "t", "kafka_partition": 0, "kafka_offset": i, "fetched_at": START + timedelta(minutes=i),
-             "event_type": "poll_log", "batch_id": b} for i, b in enumerate([None, "bA", "bB"])]
+    rows = [RawRow(kafka_topic="t", kafka_partition=0, kafka_offset=i, kafka_timestamp=None, event_type="poll_log",
+                   poll_id="p", source=None, source_url=None, gbfs_version=None, feed_last_updated=None,
+                   fetched_at=START + timedelta(minutes=i), producer_version=None, replay=False, replayed_at=None,
+                   payload_json="{}", batch_id=b, processed_at=START)
+            for i, b in enumerate([None, "bA", "bB"])]
     lake.RAW_POLL_LOG.write(storage, "mixed", rows)
     for compact in (False, True):
         if compact:

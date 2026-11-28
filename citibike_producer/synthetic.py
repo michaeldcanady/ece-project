@@ -11,9 +11,9 @@ import argparse
 import os
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, MutableMapping, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, List, MutableMapping, Optional, Sequence
 
-from citibike_contract import JsonObject, iso
+from citibike_contract import JsonObject, JsonValue, iso
 
 from .config import TOPIC_INFO, TOPIC_STATUS, Config
 from .fetch_result import FetchResult
@@ -22,6 +22,9 @@ from .job_state import JobState
 from .kafka_sink import KafkaSink
 from .poll import poll
 from .weather_feed import WeatherFeed
+
+if TYPE_CHECKING:
+    from confluent_kafka import KafkaError, Message
 
 URL_STATUS = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_status.json"
 URL_INFO = "https://gbfs.citibikenyc.com/gbfs/2.3/en/station_information.json"
@@ -33,10 +36,11 @@ class _NullProducer:
     """Accepts messages; fires delivery callbacks on flush like a healthy broker."""
 
     def __init__(self) -> None:
-        self._cbs: List[Callable[[object, object], None]] = []
+        self._cbs: List[Callable[[Optional[KafkaError], Optional[Message]], None]] = []
 
     def produce(self, topic: str, key: bytes = b"", value: bytes = b"",
-                on_delivery: Optional[Callable[[object, object], None]] = None, timestamp: int = 0) -> None:
+                on_delivery: Optional[Callable[[Optional[KafkaError], Optional[Message]], None]] = None,
+                timestamp: int = 0) -> None:
         if on_delivery:
             self._cbs.append(on_delivery)
 
@@ -73,7 +77,7 @@ class _Sim:
             self.bikes[1] = min(self.cap[1], self.bikes[1] + 1)
 
     def stations(self, t: datetime, t0: datetime) -> Sequence[JsonObject]:
-        out: List[MutableMapping[str, object]] = []
+        out: List[MutableMapping[str, JsonValue]] = []
         for i in range(self.n):
             b, c = self.bikes[i], self.cap[i]
             out.append({

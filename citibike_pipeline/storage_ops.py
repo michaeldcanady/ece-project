@@ -8,17 +8,19 @@ from typing import List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from citibike_contract import JsonValue
+
 from .config import PipelineConfig
 from .local_storage import LocalStorage
 from .s3_storage import S3Storage
 from .storage import Storage
 
 
-def put_json(storage: Storage, key: str, obj: object) -> None:
+def put_json(storage: Storage, key: str, obj: JsonValue) -> None:
     storage.put(key, json.dumps(obj, sort_keys=True, indent=1).encode("utf-8"))
 
 
-def get_json(storage: Storage, key: str) -> object:
+def get_json(storage: Storage, key: str) -> JsonValue:
     return json.loads(storage.get(key).decode("utf-8"))
 
 
